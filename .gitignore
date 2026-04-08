@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+out/
+dist/
+
+# Logs
+*.log
+build.log
+docker-build.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude / AI conversation artifacts
+.claude/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Database files (generated at runtime)
+*.sqlite
+*.sqlite3
+*.db
+
+# Past conversation docs (not part of the product)
+docs/dialogue.md
+docs/plan-pikminKeep.prompt.md
+docs/plan.md
+docs/tasks.md
+docs/codex-5.3-review.md
+docs/requirements.txt
+
+# Docker
+docker-build.log
+
+# pnpm
+.pnpmfile.cjs

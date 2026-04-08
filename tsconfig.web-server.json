@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "outDir": "dist/server",
+    "rootDir": ".",
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["src/shared/*"]
+    },
+    "declaration": false,
+    "sourceMap": false,
+    "noEmit": true
+  },
+  "include": [
+    "web/server/**/*.ts",
+    "src/shared/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

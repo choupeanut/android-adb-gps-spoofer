@@ -1,0 +1,41 @@
+appId: com.peanutchou.android-adb-gps-spoofer
+productName: Android ADB GPS Spoofer
+copyright: Copyright © 2026 peanutchou
+
+directories:
+  buildResources: resources
+  output: dist
+
+files:
+  - out/**/*
+  - package.json
+
+extraResources:
+  - from: resources/platform-tools/
+    to: platform-tools
+    filter:
+      - adb.exe
+      - AdbWinApi.dll
+      - AdbWinUsbApi.dll
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/icon.ico
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  icon: resources/icon.png
+  category: Utility
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Android ADB GPS Spoofer
