@@ -46,7 +46,7 @@ docs/requirements.txt
 docker-build.log
 
 # pnpm
-.pnpmfile.cjs
+# (none - .pnpmfile.cjs should be committed)
 
 # ADB binaries (users download separately)
 resources/platform-tools/*.exe
