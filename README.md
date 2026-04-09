@@ -15,13 +15,13 @@ Designed and tested for compatibility with **Pikmin Bloom** and **Pokemon GO**.
 ### Key Features
 
 **Location Control**
-- Teleport -- click the map or enter coordinates to jump to any location instantly
+- Teleport -- click the map or enter coordinates to jump to any location (distances ≤ 1 km glide smoothly at walk speed, > 1 km teleport instantly)
 - Joystick -- walk, cycle, or drive with a virtual joystick or WASD / arrow keys
 - Route Mode -- draw multi-waypoint routes on the map or import GPX files, then auto-walk them
 - Wander Mode -- randomised movement within a configurable radius while routes are paused
 
 **Anti-Detection**
-- Gaussian GPS jitter (~0.5 m random noise on every coordinate update)
+- Gaussian GPS jitter (~10 m random noise on every coordinate update)
 - Speed fluctuation (+/-15% random variation on movement speed)
 - Bearing smoothing (gradual direction changes, no instant snaps)
 - Cooldown timer with distance-based wait time calculator (based on Pokemon GO cooldown table)
@@ -168,7 +168,7 @@ No root access, no modified APK, and no app installation on the phone is needed.
 | 1000 km  | 100 min   |
 | 1500 km  | 120 min   |
 
-The app displays a cooldown warning when teleporting distances over 500 m.
+The app displays a cooldown warning when teleporting distances of 500 m or more.
 
 **Disclaimer**: GPS spoofing may violate the Terms of Service of Pikmin Bloom, Pokemon GO, and other location-based games. Use at your own risk.
 
@@ -231,13 +231,13 @@ MIT
 ### 主要功能
 
 **位置控制**
-- 瞬間移動 -- 點擊地圖或輸入座標，立即跳轉至任何地點
+- 瞬間移動 -- 點擊地圖或輸入座標跳轉至任何地點（距離 ≤ 1 公里時以步行速度平滑移動，> 1 公里瞬間傳送）
 - 搖桿模式 -- 使用虛擬搖桿或 WASD / 方向鍵，以步行、騎車或開車速度移動
 - 路線模式 -- 在地圖上繪製多點路線或匯入 GPX 檔案，自動沿路線行走
 - 漫遊模式 -- 路線暫停時，在可設定的半徑內隨機移動
 
 **反偵測機制**
-- 高斯 GPS 抖動（每次座標更新加入約 0.5 公尺隨機噪音）
+- 高斯 GPS 抖動（每次座標更新加入約 10 公尺隨機噪音）
 - 速度波動（移動速度 +/-15% 隨機變化）
 - 方向平滑化（漸進式方向變更，避免瞬間轉向）
 - 冷卻計時器，內建基於距離的等待時間計算（依據 Pokemon GO 冷卻時間表）
@@ -384,7 +384,7 @@ adb shell cmd location providers set-test-provider-location gps --location <lat>
 | 1000 km  | 100 分鐘 |
 | 1500 km  | 120 分鐘 |
 
-當瞬移距離超過 500 公尺時，應用程式會顯示冷卻時間警告。
+當瞬移距離達 500 公尺以上時，應用程式會顯示冷卻時間警告。
 
 **免責聲明**：GPS 偽裝可能違反 Pikmin Bloom、Pokemon GO 及其他位置型遊戲的服務條款。使用風險自負。
 

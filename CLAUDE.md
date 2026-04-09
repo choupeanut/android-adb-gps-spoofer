@@ -233,7 +233,7 @@ Zustand stores, no persistence (state resets on app restart except SQLite):
 
 ## Anti-Cheat System
 
-- **Jitter** (`applyJitter`): Gaussian noise on lat/lng (sigma = 0.000005 deg) + accuracy randomisation
+- **Jitter** (`applyJitter`): Gaussian noise on lat/lng (sigma = 0.00009 deg ≈ 10 m) + accuracy randomisation
 - **Speed fluctuation** (`applySpeedFluctuation`): +/-15% random variation
 - **Bearing smoothing** (`smoothBearing`): 30% interpolation per tick (no instant direction changes)
 - **Cooldown warning** (`TeleportPanel`): shown for distances >= 500 m; table in `COOLDOWN_TABLE`

@@ -47,3 +47,7 @@ docker-build.log
 
 # pnpm
 .pnpmfile.cjs
+
+# ADB binaries (users download separately)
+resources/platform-tools/*.exe
+resources/platform-tools/*.dll
