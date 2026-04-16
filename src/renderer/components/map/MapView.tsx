@@ -144,8 +144,10 @@ export function MapView(): JSX.Element {
     <div className="h-full w-full relative">
       <MapContainer center={[25.033, 121.565]} zoom={13} className="h-full w-full z-0">
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+          subdomains="abcd"
+          maxZoom={20}
         />
 
         <MapRefGrabber mapRef={mapRef} />

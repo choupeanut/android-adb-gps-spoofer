@@ -50,7 +50,12 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
   // ─── Mock location setup ─────────────────────────────────────────────────
 
   handle('enable-mock-location', async (serial: string) => {
-    return deviceManager.adbService.enableMockLocation(serial)
+    await deviceManager.adbService.hardenWifiConnection(serial)
+    const result = await deviceManager.adbService.enableMockLocation(serial)
+    if (result.ok) {
+      await deviceManager.adbService.maybeDisableMasterLocationForSpoof(serial)
+    }
+    return result
   })
 
   // ─── Real GPS read ────────────────────────────────────────────────────────
@@ -92,17 +97,17 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
 
   handle('teleport', async (serials: string[], lat: number, lng: number) => {
     const results = await Promise.all(
-      serials.map((serial) => {
+      serials.map(async (serial) => {
         const { location, route } = engineManager.getEngines(serial)
         // Stop any active route before teleporting to prevent timer conflicts.
-        route.stop()
+        route.stopForStay()
         return location.teleport([serial], lat, lng)
       })
     )
     return results.every(Boolean)
   })
 
-  handle('start-joystick', (serials: string[]) => {
+  handle('start-joystick', async (serials: string[]) => {
     for (const serial of serials) {
       const { location, route } = engineManager.getEngines(serial)
       
@@ -119,7 +124,7 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
       }
       
       // Stop any active route before joystick to prevent timer conflicts.
-      route.stop()
+      route.stopForStay()
       location.setMode('joystick')
       location.startContinuousUpdate([serial])
     }
@@ -153,8 +158,8 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
     await Promise.all(
       serials.map(async (serial) => {
         const { location, route } = engineManager.getEngines(serial)
+        route.stopForStay()
         await location.stop([serial])
-        route.stop()
       })
     )
     return true
@@ -163,7 +168,7 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
   handle('stop-spoofing-graceful', (serials: string[], realLat: number, realLng: number) => {
     for (const serial of serials) {
       const { location, route } = engineManager.getEngines(serial)
-      route.stop()
+      route.stopForStay()
       location.startGracefulStop([serial], realLat, realLng)
     }
     return true
@@ -183,7 +188,11 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
   // ─── Stop All (new) ──────────────────────────────────────────────────────
 
   handle('stop-all', async (mode: 'stay' | 'graceful' | 'immediate') => {
+    const targets = engineManager.getActiveSerials()
     await engineManager.stopAll(mode)
+    if (mode !== 'stay') {
+      await Promise.all(targets.map((serial) => deviceManager.adbService.maybeRestoreMasterLocation(serial)))
+    }
     return true
   })
 
@@ -246,13 +255,35 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
     return true
   })
 
-  handle('route-stop', (serials?: string[]) => {
+  handle('route-stop', async (serials?: string[]) => {
     const targets = serials ?? engineManager.getActiveSerials()
-    for (const serial of targets) {
-      const pair = engineManager.peekEngines(serial)
-      if (pair) pair.route.stop()
-    }
+    await Promise.all(
+      targets.map(async (serial) => {
+        const pair = engineManager.peekEngines(serial)
+        if (!pair) return
+        await pair.route.stopAndAwaitCleanup()
+        await deviceManager.adbService.maybeRestoreMasterLocation(serial)
+      })
+    )
     return true
+  })
+
+  /** Stop route but stay at current spoofed position (transfer to location engine keep-alive). */
+  handle('route-stop-stay', async (serials?: string[]) => {
+    const targets = serials ?? engineManager.getActiveSerials()
+    const results = await Promise.all(
+      targets.map(async (serial) => {
+        const pair = engineManager.peekEngines(serial)
+        if (!pair) return false
+        const currentLoc = pair.route.getCurrentLocation()
+        pair.route.stopForStay()
+        if (!currentLoc) return true
+        // Transfer position to location engine and start teleport keep-alive
+        pair.location.updatePosition(currentLoc.lat, currentLoc.lng, currentLoc.bearing, 0)
+        return pair.location.teleport([serial], currentLoc.lat, currentLoc.lng)
+      })
+    )
+    return results.every(Boolean)
   })
 
   handle('route-return-to-gps', (

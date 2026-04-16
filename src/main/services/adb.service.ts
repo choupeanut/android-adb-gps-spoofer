@@ -9,29 +9,136 @@ import type { DeviceInfo, LocationUpdate } from '@shared/types'
 const execFileAsync = promisify(execFile)
 
 function findAdb(): string {
-  if (process.env.ADB_PATH) return process.env.ADB_PATH
+  if (process.env.ADB_PATH) {
+    console.log('[ADB] Using ADB_PATH from env:', process.env.ADB_PATH)
+    return process.env.ADB_PATH
+  }
 
   const adbExe = process.platform === 'win32' ? 'adb.exe' : 'adb'
+  console.log('[ADB] Platform:', process.platform, 'Looking for:', adbExe)
 
   if (!is.dev && process.resourcesPath) {
     const bundled = join(process.resourcesPath, 'platform-tools', adbExe)
+    console.log('[ADB] Checking bundled path:', bundled, 'exists:', existsSync(bundled))
     if (existsSync(bundled)) return bundled
   }
 
   if (is.dev) {
     const devBundled = join(__dirname, '../../../resources/platform-tools', adbExe)
+    console.log('[ADB] Checking dev bundled path:', devBundled, 'exists:', existsSync(devBundled))
     if (existsSync(devBundled)) return devBundled
   }
 
+  console.log('[ADB] Falling back to system adb')
   return 'adb'
 }
 
 export class AdbService {
   private adbPath: string
+  /** Track last successful push per serial for health monitoring. */
+  private lastPushSuccess = new Map<string, number>()
+  /** Cache which WiFi serials have been hardened this session. */
+  private wifiHardened = new Set<string>()
+  /** Serials for which master location was force-disabled by experimental mode. */
+  private masterLocationForcedOff = new Set<string>()
 
   constructor() {
     this.adbPath = findAdb()
     log('info', `[AdbService] using adb: ${this.adbPath}`)
+  }
+
+  /**
+   * Best-effort WiFi stability tweaks for TCP ADB devices.
+   * No-op for USB serials.
+   */
+  async hardenWifiConnection(serial: string): Promise<void> {
+    if (!serial.includes(':')) return
+    if (this.wifiHardened.has(serial)) return
+    try {
+      await execFileAsync(
+        this.adbPath,
+        ['-s', serial, 'shell', 'settings', 'put', 'global', 'wifi_sleep_policy', '2'],
+        { timeout: 3000 }
+      ).catch(() => {})
+      await execFileAsync(
+        this.adbPath,
+        ['-s', serial, 'shell', 'dumpsys', 'deviceidle', 'whitelist', '+com.android.shell'],
+        { timeout: 3000 }
+      ).catch(() => {})
+      this.wifiHardened.add(serial)
+      log('info', `[ADB] WiFi hardened for ${serial}`)
+    } catch (err: any) {
+      log('warn', `[ADB] WiFi harden failed for ${serial}: ${err.message}`)
+    }
+  }
+
+  /** Milliseconds since last successful pushLocation for this serial. */
+  getLastPushAge(serial: string): number {
+    const last = this.lastPushSuccess.get(serial)
+    return last ? Date.now() - last : Infinity
+  }
+
+  /** Attempt to reconnect a WiFi ADB device. */
+  async reconnectWifi(serial: string): Promise<boolean> {
+    if (!serial.includes(':')) return false
+    const ip = serial.split(':')[0]
+    const port = serial.split(':')[1] || '5555'
+    try {
+      await execFileAsync(this.adbPath, ['disconnect', serial], { timeout: 3000 }).catch(() => {})
+      const { stdout } = await execFileAsync(this.adbPath, ['connect', `${ip}:${port}`], { timeout: 8000 })
+      const ok = stdout.includes('connected')
+      if (ok) log('info', `[ADB] Reconnected WiFi: ${serial}`)
+      return ok
+    } catch {
+      return false
+    }
+  }
+
+  private isExperimentalMasterLocationToggleEnabled(): boolean {
+    return process.env.EXPERIMENTAL_DISABLE_REAL_GPS_ON_FAKE === '1'
+  }
+
+  async setMasterLocationEnabled(serial: string, enabled: boolean): Promise<boolean> {
+    try {
+      await execFileAsync(
+        this.adbPath,
+        ['-s', serial, 'shell', 'cmd', 'location', 'set-location-enabled', String(enabled)],
+        { timeout: 4000 }
+      )
+      return true
+    } catch {
+      try {
+        // Fallback for devices requiring explicit user argument.
+        await execFileAsync(
+          this.adbPath,
+          ['-s', serial, 'shell', 'cmd', 'location', 'set-location-enabled', String(enabled), '--user', '0'],
+          { timeout: 4000 }
+        )
+        return true
+      } catch (err: any) {
+        log('warn', `[ADB] set-location-enabled ${enabled} failed for ${serial}: ${err.message}`)
+        return false
+      }
+    }
+  }
+
+  async maybeDisableMasterLocationForSpoof(serial: string): Promise<void> {
+    if (!this.isExperimentalMasterLocationToggleEnabled()) return
+    if (this.masterLocationForcedOff.has(serial)) return
+    const ok = await this.setMasterLocationEnabled(serial, false)
+    if (ok) {
+      this.masterLocationForcedOff.add(serial)
+      log('warn', `[ADB] Experimental mode: master location disabled for ${serial}`)
+    }
+  }
+
+  async maybeRestoreMasterLocation(serial: string): Promise<void> {
+    if (!this.masterLocationForcedOff.has(serial)) return
+    const ok = await this.setMasterLocationEnabled(serial, true)
+    if (ok) {
+      this.masterLocationForcedOff.delete(serial)
+      log('info', `[ADB] Experimental mode: master location restored for ${serial}`)
+    }
   }
 
   // ─── Device discovery ────────────────────────────────────────────────────
@@ -187,12 +294,28 @@ export class AdbService {
           '--accuracy', String(loc.accuracy),
           '--time',     String(loc.timestamp)
         ],
-        { timeout: 4000 }
+        { timeout: 3000 }
       )
+      this.lastPushSuccess.set(serial, Date.now())
       return true
     } catch (err: any) {
-      log('error', `[pushLocation] ${serial}: ${err.message}`)
-      return false
+      // Fallback for older Android builds that only accept raw "lat,lng" arg.
+      try {
+        await execFileAsync(
+          this.adbPath,
+          [
+            '-s', serial, 'shell',
+            'cmd', 'location', 'providers', 'set-test-provider-location', 'gps',
+            `${loc.lat},${loc.lng}`
+          ],
+          { timeout: 3000 }
+        )
+        this.lastPushSuccess.set(serial, Date.now())
+        return true
+      } catch {
+        log('error', `[pushLocation] ${serial}: ${err.message}`)
+        return false
+      }
     }
   }
 
@@ -246,6 +369,8 @@ export class AdbService {
 
   /**
    * Read the phone's real GPS position from dumpsys location.
+   * When spoofing is active, only the `network` provider is trustworthy — `passive`,
+   * `fused`, and `gps` are all contaminated by the mock GPS test provider.
    * Returns null if unavailable or parsing fails.
    */
   async getRealLocation(serial: string): Promise<{ lat: number; lng: number } | null> {
@@ -260,15 +385,20 @@ export class AdbService {
       }
     }
 
-    // Shared parser — handles multiple output formats across Android versions
-    const parse = (text: string, label: string): { lat: number; lng: number } | null => {
-      const c = '(-?\\d+\\.?\\d*)'
-      const sep = ',\\s*'
+    const c = '(-?\\d+\\.?\\d*)'
+    const sep = ',\\s*'
+    const allowContaminatedFallback = process.env.ALLOW_CONTAMINATED_REAL_GPS === '1'
 
+    // Only trust `network` provider — fused/gps/passive are all contaminated by mock GPS.
+    // Network provider uses cell towers + WiFi, never affected by GPS test provider.
+    const SAFE_PROVIDERS = ['network']
+    // Contaminated providers — only used as last resort when no network is available
+    const ALL_PROVIDERS = ['network', 'passive', 'fused', 'gps']
+
+    // Parse location from text, optionally restricted to safe providers only
+    const parseProviders = (text: string, label: string, providers: string[]): { lat: number; lng: number } | null => {
       // Format A: "provider: Location[provider LAT,LNG ...]"
-      // network/passive are checked first — they are unaffected by the GPS test provider.
-      // fused/gps are checked last because they reflect the mocked position when spoofing is active.
-      for (const name of ['network', 'passive', 'fused', 'gps']) {
+      for (const name of providers) {
         const re = new RegExp(`${name}:\\s*Location\\[${name}\\s+${c}${sep}${c}`)
         const m = text.match(re)
         if (m) {
@@ -280,33 +410,21 @@ export class AdbService {
         }
       }
 
-      // Format B: JSON "latitude":LAT "longitude":LNG (newer Android / some cmd outputs)
-      const jLat = text.match(/"latitude":\s*(-?\d+\.?\d*)/)
-      const jLng = text.match(/"longitude":\s*(-?\d+\.?\d*)/)
-      if (jLat && jLng) {
-        const lat = parseFloat(jLat[1]), lng = parseFloat(jLng[1])
-        if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
-          log('info', `[getRealLocation] ${label}: json → ${lat.toFixed(6)}, ${lng.toFixed(6)}`)
-          return { lat, lng }
-        }
-      }
-
       // Format C: bare "provider: LAT,LNG" (possible Android 16 format)
-      const bareMatch = text.match(
-        /(?:fused|gps|network|passive):\s+(-?\d{1,3}\.\d{4,}),\s*(-?\d{1,3}\.\d{4,})/
-      )
-      if (bareMatch) {
-        const lat = parseFloat(bareMatch[1]), lng = parseFloat(bareMatch[2])
-        if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
-          log('info', `[getRealLocation] ${label}: bare → ${lat.toFixed(6)}, ${lng.toFixed(6)}`)
-          return { lat, lng }
+      for (const name of providers) {
+        const bareRe = new RegExp(`${name}:\\s+(-?\\d{1,3}\\.\\d{4,}),\\s*(-?\\d{1,3}\\.\\d{4,})`)
+        const bareMatch = text.match(bareRe)
+        if (bareMatch) {
+          const lat = parseFloat(bareMatch[1]), lng = parseFloat(bareMatch[2])
+          if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+            log('info', `[getRealLocation] ${label}: bare-${name} → ${lat.toFixed(6)}, ${lng.toFixed(6)}`)
+            return { lat, lng }
+          }
         }
       }
 
       // Format D: "Location[provider LAT,LNG ...]" without leading "provider:" prefix
-      // Matches Android 16 passive-provider format: "last location=Location[fused 25.078,121.499 ..."
-      // network/passive checked first for same reason as Format A.
-      for (const name of ['network', 'passive', 'fused', 'gps']) {
+      for (const name of providers) {
         const re = new RegExp(`Location\\[${name}\\s+${c}${sep}${c}`)
         const m = text.match(re)
         if (m) {
@@ -321,8 +439,9 @@ export class AdbService {
       return null
     }
 
-    // ── Method 1: cmd location get-last-location (try default + user 0 + user 11) ──
-    // Note: execFileAsync throws on non-zero exit; safeRun salvages stdout regardless.
+    // ── Pass 1: Try safe (network-only) providers first ─────────────────────
+
+    // Method 1: cmd location get-last-location
     for (const userArgs of [[], ['--user', '0'], ['--user', '11']]) {
       const label = `cmd${userArgs.length ? userArgs.join('') : ''}`
       const out = await safeRun([
@@ -330,25 +449,59 @@ export class AdbService {
         'cmd', 'location', 'get-last-location', ...userArgs
       ])
       log('info', `[getRealLocation] ${label}: ${out.slice(0, 400).replace(/\n/g, ' ')}`)
-      const r = parse(out, label)
+      const r = parseProviders(out, label, SAFE_PROVIDERS)
       if (r) return r
     }
 
-    // ── Method 2: dumpsys location ────────────────────────────────────────────
+    // Method 2: dumpsys location (network only)
     const dump = await safeRun(['-s', serial, 'shell', 'dumpsys', 'location'])
-    const r = parse(dump, 'dumpsys')
-    if (r) return r
+    const safeResult = parseProviders(dump, 'dumpsys-safe', SAFE_PROVIDERS)
+    if (safeResult) return safeResult
 
-    // ── Method 3: full-dump coordinate scan (Android 16 fallback) ─────────────
-    // Search the entire dumpsys output for lat/lng key=value patterns
-    const latKv = dump.match(/\blat(?:itude)?[=:\s]+(-?\d{1,2}\.\d{4,})/i)
-    const lngKv = dump.match(/\blon(?:g(?:itude)?)?[=:\s]+(-?\d{1,3}\.\d{4,})/i)
-    if (latKv && lngKv) {
-      const lat = parseFloat(latKv[1]), lng = parseFloat(lngKv[1])
-      if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
-        log('info', `[getRealLocation] kv-scan → ${lat.toFixed(6)}, ${lng.toFixed(6)}`)
-        return { lat, lng }
+    if (allowContaminatedFallback) {
+      // ── Pass 2: Optional contaminated fallback for diagnostics only ────────
+      for (const userArgs of [[], ['--user', '0'], ['--user', '11']]) {
+        const label = `cmd-fallback${userArgs.length ? userArgs.join('') : ''}`
+        const out = await safeRun([
+          '-s', serial, 'shell',
+          'cmd', 'location', 'get-last-location', ...userArgs
+        ])
+        const r = parseProviders(out, label, ALL_PROVIDERS)
+        if (r) {
+          log('warn', `[getRealLocation] using fallback provider (may be contaminated by mock GPS)`)
+          return r
+        }
       }
+
+      const fallbackResult = parseProviders(dump, 'dumpsys-fallback', ALL_PROVIDERS)
+      if (fallbackResult) {
+        log('warn', `[getRealLocation] using fallback provider (may be contaminated by mock GPS)`)
+        return fallbackResult
+      }
+
+      // Format B: JSON "latitude":LAT "longitude":LNG (newer Android / some cmd outputs)
+      const jLat = dump.match(/"latitude":\s*(-?\d+\.?\d*)/)
+      const jLng = dump.match(/"longitude":\s*(-?\d+\.?\d*)/)
+      if (jLat && jLng) {
+        const lat = parseFloat(jLat[1]), lng = parseFloat(jLng[1])
+        if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+          log('warn', `[getRealLocation] json fallback → ${lat.toFixed(6)}, ${lng.toFixed(6)} (may be contaminated)`)
+          return { lat, lng }
+        }
+      }
+
+      // Method 3: full-dump coordinate scan (Android 16 fallback)
+      const latKv = dump.match(/\blat(?:itude)?[=:\s]+(-?\d{1,2}\.\d{4,})/i)
+      const lngKv = dump.match(/\blon(?:g(?:itude)?)?[=:\s]+(-?\d{1,3}\.\d{4,})/i)
+      if (latKv && lngKv) {
+        const lat = parseFloat(latKv[1]), lng = parseFloat(lngKv[1])
+        if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+          log('warn', `[getRealLocation] kv-scan → ${lat.toFixed(6)}, ${lng.toFixed(6)} (may be contaminated)`)
+          return { lat, lng }
+        }
+      }
+    } else {
+      log('warn', '[getRealLocation] no trusted provider available (strict mode), returning null')
     }
 
     // Log diagnostic windows so we can identify the actual Android 16 format
@@ -357,7 +510,6 @@ export class AdbService {
     if (knownIdx >= 0) {
       log('warn', `[getRealLocation] Last Known section: ${dump.slice(knownIdx, knownIdx + 800).replace(/\n/g, ' ')}`)
     } else {
-      // Dump in 600-char windows covering first 3000 chars
       for (let i = 0; i < Math.min(dump.length, 3000); i += 600) {
         log('warn', `[getRealLocation] dump[${i}–${i + 600}]: ${dump.slice(i, i + 600).replace(/\n/g, ' ')}`)
       }
@@ -368,10 +520,20 @@ export class AdbService {
   // ─── Cleanup ──────────────────────────────────────────────────────────────
 
   closeShell(_serial: string): void {
-    // no-op — we no longer use persistent shells
+    this.lastPushSuccess.delete(_serial)
+    this.wifiHardened.delete(_serial)
+    this.masterLocationForcedOff.delete(_serial)
   }
 
   dispose(): void {
-    // no-op
+    if (this.masterLocationForcedOff.size > 0) {
+      for (const serial of this.masterLocationForcedOff) {
+        // Best-effort restore during shutdown.
+        void this.setMasterLocationEnabled(serial, true)
+      }
+    }
+    this.lastPushSuccess.clear()
+    this.wifiHardened.clear()
+    this.masterLocationForcedOff.clear()
   }
 }

@@ -94,19 +94,23 @@ export class DeviceEngineManager {
     pair: DeviceEngines,
     mode: 'stay' | 'graceful' | 'immediate'
   ): Promise<void> {
-    // Stop route engine
-    pair.route.stop()
+    const routeLoc = pair.route.getCurrentLocation()
 
     switch (mode) {
       case 'stay':
+        pair.route.stopForStay()
         // Keep mock GPS at current position — just stop movement, keep-alive continues via teleport hold
-        if (pair.location.getCurrentLocation()) {
+        if (routeLoc || pair.location.getCurrentLocation()) {
           // Re-teleport to current position to start keep-alive
-          const loc = pair.location.getCurrentLocation()!
+          const loc = routeLoc ?? pair.location.getCurrentLocation()!
           await pair.location.teleport([serial], loc.lat, loc.lng)
         }
         break
       case 'graceful': {
+        pair.route.stopForStay()
+        if (routeLoc) {
+          pair.location.updatePosition(routeLoc.lat, routeLoc.lng, routeLoc.bearing, routeLoc.speed)
+        }
         // Walk back to real GPS
         const realLoc = await this.adb.getRealLocation(serial)
         if (realLoc) {
@@ -117,6 +121,7 @@ export class DeviceEngineManager {
         break
       }
       case 'immediate':
+        await pair.route.stopAndAwaitCleanup()
         await pair.location.stop([serial])
         break
     }

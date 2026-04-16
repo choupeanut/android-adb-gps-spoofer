@@ -1,11 +1,15 @@
 import { AdbService } from './adb.service'
 import { broadcast } from './broadcast'
-import { applySpeedFluctuation, smoothBearing } from './anti-detect'
+import { applySpeedFluctuation, smoothBearing, applyJitter } from './anti-detect'
 import { haversineDistance, bearing, interpolatePoints } from '../utils/coordinates'
 import { DEFAULT_ACCURACY, UPDATE_INTERVAL_MS } from '@shared/constants'
+import { log } from '../logger'
 import type { RouteWaypoint, LocationUpdate, SpoofMode } from '@shared/types'
 
 const GLIDE_MAX_KM = 0.5  // 500 m — glide to route start if within this distance
+// Push health monitoring - faster detection prevents GPS jump-back
+const ROUTE_PUSH_STALE_MS = 800  // Consider stale after 800ms (was 1500ms)
+const ROUTE_WATCHDOG_INTERVAL_MS = 200  // Check every 200ms (was 300ms)
 
 export interface RouteState {
   waypoints: RouteWaypoint[]
@@ -41,6 +45,14 @@ export class RouteEngine {
   private speedMs = 1.4
   private wanderEnabled = false
   private wanderRadiusM = 100
+  /** Backpressure guard: skip tick if previous push still in-flight */
+  private pushInFlight = false
+  /** Backup keep-alive timer for dual-channel strategy */
+  private backupKeepAliveTimer: ReturnType<typeof setInterval> | null = null
+  /** Route/glide watchdog timer to recover from push stalls. */
+  private pushWatchdogTimer: ReturnType<typeof setInterval> | null = null
+  /** Timestamp of last successful pushLocation call. */
+  private lastPushOkAt = 0
 
   constructor(adb: AdbService, serial: string) {
     this.adb = adb
@@ -112,6 +124,28 @@ export class RouteEngine {
 
   /** Instant stop — clears state and removes test providers immediately. */
   stop(): void {
+    void this.stopAndAwaitCleanup()
+  }
+
+  /**
+   * Stop route movement/state but keep test provider attached for handoff
+   * to another spoofing mode (teleport keep-alive / joystick).
+   */
+  stopForStay(): void {
+    this.stopWander()
+    this.state.finishedNaturally = false
+    this.state.playing = false
+    this.state.currentWaypointIndex = 0
+    this.state.progressFraction = 0
+    this.stopTimer()
+    this.stopKeepAlive()
+    this.currentLocation = null
+    this.targetSerials = []
+    this.notifyRenderer()
+  }
+
+  /** Stop route and await provider cleanup to avoid handoff races. */
+  async stopAndAwaitCleanup(): Promise<void> {
     this.stopWander()
     this.state.finishedNaturally = false
     this.state.playing = false
@@ -123,7 +157,8 @@ export class RouteEngine {
     this.currentLocation = null
     this.targetSerials = []
     this.notifyRenderer()
-    Promise.all(serials.map((s) => this.adb.removeTestProvider(s))).catch(() => {})
+    await Promise.all(serials.map((s) => this.adb.removeTestProvider(s))).catch(() => {})
+    await Promise.all(serials.map((s) => this.adb.maybeRestoreMasterLocation(s))).catch(() => {})
   }
 
   /**
@@ -146,6 +181,7 @@ export class RouteEngine {
       this.currentLocation = null
       this.targetSerials = []
       Promise.all(serials.map((s) => this.adb.removeTestProvider(s))).catch(() => {})
+      Promise.all(serials.map((s) => this.adb.maybeRestoreMasterLocation(s))).catch(() => {})
       this.notifyRenderer()
     }
 
@@ -168,6 +204,7 @@ export class RouteEngine {
   private startTimer(): void {
     this.stopTimer()
     this.timer = setInterval(() => this.tick(), UPDATE_INTERVAL_MS)
+    this.startPushWatchdog()
   }
 
   private stopTimer(): void {
@@ -175,16 +212,71 @@ export class RouteEngine {
       clearInterval(this.timer)
       this.timer = null
     }
+    this.stopPushWatchdog()
+  }
+
+  private startPushWatchdog(): void {
+    this.stopPushWatchdog()
+    this.lastPushOkAt = Date.now()
+    this.pushWatchdogTimer = setInterval(async () => {
+      if (!this.timer || !this.currentLocation || this.targetSerials.length === 0) return
+      if (this.pushInFlight) return
+      if ((Date.now() - this.lastPushOkAt) <= ROUTE_PUSH_STALE_MS) return
+
+      this.pushInFlight = true
+      try {
+        const emergencyLoc: LocationUpdate = { ...this.currentLocation, timestamp: Date.now() }
+        const results = await this.pushLocationToTargets(emergencyLoc)
+        if (results.some(Boolean)) {
+          log('warn', `[Route-watchdog] emergency push recovered stale stream for [${this.targetSerials.join(', ')}]`)
+          this.notifyRenderer()
+        }
+      } finally {
+        this.pushInFlight = false
+      }
+    }, ROUTE_WATCHDOG_INTERVAL_MS)
+  }
+
+  private stopPushWatchdog(): void {
+    if (this.pushWatchdogTimer) {
+      clearInterval(this.pushWatchdogTimer)
+      this.pushWatchdogTimer = null
+    }
+  }
+
+  private async pushLocationToTargets(loc: LocationUpdate): Promise<boolean[]> {
+    const results = await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
+    if (results.some(Boolean)) this.lastPushOkAt = Date.now()
+    return results
   }
 
   private startKeepAlive(): void {
     this.stopKeepAlive()
+    this.pushInFlight = false
+
+    // Primary channel with backpressure guard
     this.keepAliveTimer = setInterval(async () => {
       if (!this.currentLocation || this.targetSerials.length === 0) return
-      const loc: LocationUpdate = { ...this.currentLocation, speed: 0, bearing: 0, timestamp: Date.now() }
-      await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
-      this.notifyRenderer()
+      if (this.pushInFlight) return // skip if previous push pending
+      this.pushInFlight = true
+      try {
+        const loc = applyJitter({ ...this.currentLocation, speed: 0, bearing: 0, timestamp: Date.now() })
+        await this.pushLocationToTargets(loc)
+        this.notifyRenderer()
+      } finally {
+        this.pushInFlight = false
+      }
     }, UPDATE_INTERVAL_MS)
+
+    // Backup channel: independent push every 1s as safety net (was 2.5s)
+    this.backupKeepAliveTimer = setInterval(async () => {
+      if (!this.currentLocation || this.targetSerials.length === 0) return
+      const loc = applyJitter({ ...this.currentLocation, speed: 0, bearing: 0, timestamp: Date.now() })
+      await Promise.race([
+        Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc))),
+        new Promise(resolve => setTimeout(resolve, 1500))
+      ]).catch(() => {})
+    }, 1000)
   }
 
   private stopKeepAlive(): void {
@@ -192,6 +284,11 @@ export class RouteEngine {
       clearInterval(this.keepAliveTimer)
       this.keepAliveTimer = null
     }
+    if (this.backupKeepAliveTimer) {
+      clearInterval(this.backupKeepAliveTimer)
+      this.backupKeepAliveTimer = null
+    }
+    this.pushInFlight = false
   }
 
   private startWander(): void {
@@ -262,15 +359,15 @@ export class RouteEngine {
         accuracy: DEFAULT_ACCURACY, bearing: brg, speed: this.speedMs, timestamp: Date.now()
       }
       this.currentLocation = loc
-      await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
+      await this.pushLocationToTargets(loc)
       this.notifyRenderer()
 
       if (progress >= 1) {
-        clearInterval(this.timer!)
-        this.timer = null
+        this.stopTimer()
         onDone()
       }
     }, UPDATE_INTERVAL_MS)
+    this.startPushWatchdog()
   }
 
   /** Walk from current position to a target coordinate, then call onDone. */
@@ -286,6 +383,7 @@ export class RouteEngine {
     const stepKm = (this.speedMs * UPDATE_INTERVAL_MS) / 1_000_000
     let progress = 0
 
+    this.stopTimer()
     this.timer = setInterval(async () => {
       progress = Math.min(1, progress + stepKm / distKm)
       const pos = interpolatePoints(fromLat, fromLng, toLat, toLng, progress)
@@ -294,7 +392,7 @@ export class RouteEngine {
         accuracy: DEFAULT_ACCURACY, bearing: brg, speed: this.speedMs, timestamp: Date.now()
       }
       this.currentLocation = loc
-      await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
+      await this.pushLocationToTargets(loc)
       this.notifyRenderer()
 
       if (progress >= 1) {
@@ -302,10 +400,12 @@ export class RouteEngine {
         onDone()
       }
     }, UPDATE_INTERVAL_MS)
+    this.startPushWatchdog()
   }
 
   private async tick(): Promise<void> {
     if (!this.state.playing || !this.currentLocation) return
+    if (this.pushInFlight) return // backpressure guard for tick
 
     const wp = this.state.waypoints
     if (wp.length < 2) return
@@ -364,7 +464,12 @@ export class RouteEngine {
     }
 
     this.currentLocation = loc
-    await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
+    this.pushInFlight = true
+    try {
+      await this.pushLocationToTargets(loc)
+    } finally {
+      this.pushInFlight = false
+    }
     this.notifyRenderer()
 
     // Advance segment index after pushing location so the position is correct this tick.
@@ -403,5 +508,6 @@ export class RouteEngine {
     this.stopTimer()
     this.stopKeepAlive()
     this.stopWander()
+    this.pushInFlight = false
   }
 }

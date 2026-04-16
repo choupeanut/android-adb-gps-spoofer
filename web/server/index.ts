@@ -55,7 +55,11 @@ handle('test-adb', (serial: string) => deviceManager.adbService.testConnection(s
 handle('enable-mock-location', async (serial: string) => {
   // Apply WiFi stability hardening before enabling mock location
   await deviceManager.adbService.hardenWifiConnection(serial)
-  return deviceManager.adbService.enableMockLocation(serial)
+  const result = await deviceManager.adbService.enableMockLocation(serial)
+  if (result.ok) {
+    await deviceManager.adbService.maybeDisableMasterLocationForSpoof(serial)
+  }
+  return result
 })
 handle('get-real-location', (serial: string) => deviceManager.adbService.getRealLocation(serial))
 
@@ -84,14 +88,28 @@ handle('get-all-device-states', () => {
 // Location
 handle('teleport', async (serials: string[], lat: number, lng: number) => {
   const results = await Promise.all(
-    serials.map((serial) => engineManager.getEngines(serial).location.teleport([serial], lat, lng))
+    serials.map(async (serial) => {
+      const { location, route } = engineManager.getEngines(serial)
+      route.stopForStay()
+      return location.teleport([serial], lat, lng)
+    })
   )
   return results.every(Boolean)
 })
 
 handle('start-joystick', (serials: string[]) => {
   for (const serial of serials) {
-    const { location } = engineManager.getEngines(serial)
+    const { location, route } = engineManager.getEngines(serial)
+    const routeLocation = route.getCurrentLocation()
+    if (routeLocation) {
+      location.updatePosition(
+        routeLocation.lat,
+        routeLocation.lng,
+        routeLocation.bearing,
+        routeLocation.speed
+      )
+    }
+    route.stopForStay()
     location.setMode('joystick')
     location.startContinuousUpdate([serial])
   }
@@ -124,8 +142,8 @@ handle('update-position', (lat: number, lng: number, brg: number, speed: number,
 handle('stop-spoofing', async (serials: string[]) => {
   await Promise.all(serials.map(async (serial) => {
     const { location, route } = engineManager.getEngines(serial)
+    route.stopForStay()
     await location.stop([serial])
-    route.stop()
   }))
   return true
 })
@@ -133,7 +151,7 @@ handle('stop-spoofing', async (serials: string[]) => {
 handle('stop-spoofing-graceful', (serials: string[], realLat: number, realLng: number) => {
   for (const serial of serials) {
     const { location, route } = engineManager.getEngines(serial)
-    route.stop()
+    route.stopForStay()
     location.startGracefulStop([serial], realLat, realLng)
   }
   return true
@@ -151,7 +169,11 @@ handle('get-location-state', (serial?: string) => {
 })
 
 handle('stop-all', async (mode: 'stay' | 'graceful' | 'immediate') => {
+  const targets = engineManager.getActiveSerials()
   await engineManager.stopAll(mode)
+  if (mode !== 'stay') {
+    await Promise.all(targets.map((serial) => deviceManager.adbService.maybeRestoreMasterLocation(serial)))
+  }
   return true
 })
 
@@ -185,7 +207,12 @@ handle('route-set-waypoints', (waypoints: RouteWaypoint[], serials?: string[]) =
 })
 
 handle('route-play', async (serials: string[], speedMs: number, fromLat?: number, fromLng?: number) => {
-  await Promise.all(serials.map((serial) => engineManager.getEngines(serial).route.play([serial], speedMs, fromLat, fromLng)))
+  await Promise.all(serials.map((serial) => {
+    const { location, route } = engineManager.getEngines(serial)
+    location.stopContinuousUpdate()
+    location.setMode('idle')
+    return route.play([serial], speedMs, fromLat, fromLng)
+  }))
   return true
 })
 
@@ -195,10 +222,34 @@ handle('route-pause', (serials?: string[]) => {
   return true
 })
 
-handle('route-stop', (serials?: string[]) => {
+handle('route-stop', async (serials?: string[]) => {
   const targets = serials ?? engineManager.getActiveSerials()
-  for (const serial of targets) engineManager.peekEngines(serial)?.route.stop()
+  await Promise.all(
+    targets.map(async (serial) => {
+      const pair = engineManager.peekEngines(serial)
+      if (!pair) return
+      await pair.route.stopAndAwaitCleanup()
+      await deviceManager.adbService.maybeRestoreMasterLocation(serial)
+    })
+  )
   return true
+})
+
+/** Stop route but stay at current spoofed position (transfer to location engine keep-alive). */
+handle('route-stop-stay', async (serials?: string[]) => {
+  const targets = serials ?? engineManager.getActiveSerials()
+  const results = await Promise.all(
+    targets.map(async (serial) => {
+      const pair = engineManager.peekEngines(serial)
+      if (!pair) return false
+      const currentLoc = pair.route.getCurrentLocation()
+      pair.route.stopForStay()
+      if (!currentLoc) return true
+      pair.location.updatePosition(currentLoc.lat, currentLoc.lng, currentLoc.bearing, 0)
+      return pair.location.teleport([serial], currentLoc.lat, currentLoc.lng)
+    })
+  )
+  return results.every(Boolean)
 })
 
 handle('route-return-to-gps', (realLat: number, realLng: number, speedMs: number, serials?: string[]) => {

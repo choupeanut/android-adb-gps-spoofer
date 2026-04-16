@@ -23,6 +23,8 @@ export class AdbService {
   private lastPushSuccess = new Map<string, number>()
   /** Cache which serials have been WiFi-hardened this session */
   private wifiHardened = new Set<string>()
+  /** Serials for which master location was force-disabled by experimental mode. */
+  private masterLocationForcedOff = new Set<string>()
 
   constructor() {
     this.adbPath = findAdb()
@@ -67,6 +69,52 @@ export class AdbService {
       return ok
     } catch {
       return false
+    }
+  }
+
+  private isExperimentalMasterLocationToggleEnabled(): boolean {
+    return process.env.EXPERIMENTAL_DISABLE_REAL_GPS_ON_FAKE === '1'
+  }
+
+  async setMasterLocationEnabled(serial: string, enabled: boolean): Promise<boolean> {
+    try {
+      await execFileAsync(
+        this.adbPath,
+        ['-s', serial, 'shell', 'cmd', 'location', 'set-location-enabled', String(enabled)],
+        { timeout: 4000 }
+      )
+      return true
+    } catch {
+      try {
+        await execFileAsync(
+          this.adbPath,
+          ['-s', serial, 'shell', 'cmd', 'location', 'set-location-enabled', String(enabled), '--user', '0'],
+          { timeout: 4000 }
+        )
+        return true
+      } catch (err: any) {
+        log('warn', `[ADB] set-location-enabled ${enabled} failed for ${serial}: ${err.message}`)
+        return false
+      }
+    }
+  }
+
+  async maybeDisableMasterLocationForSpoof(serial: string): Promise<void> {
+    if (!this.isExperimentalMasterLocationToggleEnabled()) return
+    if (this.masterLocationForcedOff.has(serial)) return
+    const ok = await this.setMasterLocationEnabled(serial, false)
+    if (ok) {
+      this.masterLocationForcedOff.add(serial)
+      log('warn', `[ADB] Experimental mode: master location disabled for ${serial}`)
+    }
+  }
+
+  async maybeRestoreMasterLocation(serial: string): Promise<void> {
+    if (!this.masterLocationForcedOff.has(serial)) return
+    const ok = await this.setMasterLocationEnabled(serial, true)
+    if (ok) {
+      this.masterLocationForcedOff.delete(serial)
+      log('info', `[ADB] Experimental mode: master location restored for ${serial}`)
     }
   }
 
@@ -278,11 +326,17 @@ export class AdbService {
       }
     }
 
-    const parse = (text: string): { lat: number; lng: number } | null => {
-      const c = '(-?\\d+\\.?\\d*)'
-      const sep = ',\\s*'
+    const c = '(-?\\d+\\.?\\d*)'
+    const sep = ',\\s*'
+    const allowContaminatedFallback = process.env.ALLOW_CONTAMINATED_REAL_GPS === '1'
 
-      for (const name of ['fused', 'passive', 'gps', 'network']) {
+    // Only trust `network` provider — fused/gps/passive are contaminated by mock GPS.
+    const SAFE_PROVIDERS = ['network']
+    const ALL_PROVIDERS = ['network', 'passive', 'fused', 'gps']
+
+    const parseProviders = (text: string, providers: string[]): { lat: number; lng: number } | null => {
+      // Format A: "provider: Location[provider LAT,LNG ...]"
+      for (const name of providers) {
         const re = new RegExp(`${name}:\\s*Location\\[${name}\\s+${c}${sep}${c}`)
         const m = text.match(re)
         if (m) {
@@ -291,20 +345,18 @@ export class AdbService {
         }
       }
 
-      const jLat = text.match(/"latitude":\s*(-?\d+\.?\d*)/)
-      const jLng = text.match(/"longitude":\s*(-?\d+\.?\d*)/)
-      if (jLat && jLng) {
-        const lat = parseFloat(jLat[1]), lng = parseFloat(jLng[1])
-        if (!isNaN(lat) && Math.abs(lat) <= 90) return { lat, lng }
+      // Format C: bare "provider: LAT,LNG"
+      for (const name of providers) {
+        const bareRe = new RegExp(`${name}:\\s+(-?\\d{1,3}\\.\\d{4,}),\\s*(-?\\d{1,3}\\.\\d{4,})`)
+        const bareMatch = text.match(bareRe)
+        if (bareMatch) {
+          const lat = parseFloat(bareMatch[1]), lng = parseFloat(bareMatch[2])
+          if (!isNaN(lat) && Math.abs(lat) <= 90) return { lat, lng }
+        }
       }
 
-      const bare = text.match(/(?:fused|gps|network|passive):\s+(-?\d{1,3}\.\d{4,}),\s*(-?\d{1,3}\.\d{4,})/)
-      if (bare) {
-        const lat = parseFloat(bare[1]), lng = parseFloat(bare[2])
-        if (!isNaN(lat) && Math.abs(lat) <= 90) return { lat, lng }
-      }
-
-      for (const name of ['fused', 'gps', 'network', 'passive']) {
+      // Format D: "Location[provider LAT,LNG ...]" without prefix
+      for (const name of providers) {
         const re = new RegExp(`Location\\[${name}\\s+${c}${sep}${c}`)
         const m = text.match(re)
         if (m) {
@@ -316,21 +368,49 @@ export class AdbService {
       return null
     }
 
+    // Pass 1: network-only (safe)
     for (const userArgs of [[], ['--user', '0'], ['--user', '11']]) {
       const out = await safeRun(['-s', serial, 'shell', 'cmd', 'location', 'get-last-location', ...userArgs])
-      const r = parse(out)
+      const r = parseProviders(out, SAFE_PROVIDERS)
       if (r) return r
     }
 
     const dump = await safeRun(['-s', serial, 'shell', 'dumpsys', 'location'])
-    const r = parse(dump)
-    if (r) return r
+    const safeResult = parseProviders(dump, SAFE_PROVIDERS)
+    if (safeResult) return safeResult
 
-    const latKv = dump.match(/\blat(?:itude)?[=:\s]+(-?\d{1,2}\.\d{4,})/i)
-    const lngKv = dump.match(/\blon(?:g(?:itude)?)?[=:\s]+(-?\d{1,3}\.\d{4,})/i)
-    if (latKv && lngKv) {
-      const lat = parseFloat(latKv[1]), lng = parseFloat(lngKv[1])
-      if (!isNaN(lat) && Math.abs(lat) <= 90) return { lat, lng }
+    if (allowContaminatedFallback) {
+      // Pass 2: optional contaminated fallback for diagnostics only
+      for (const userArgs of [[], ['--user', '0'], ['--user', '11']]) {
+        const out = await safeRun(['-s', serial, 'shell', 'cmd', 'location', 'get-last-location', ...userArgs])
+        const r = parseProviders(out, ALL_PROVIDERS)
+        if (r) {
+          log('warn', `[getRealLocation] using fallback provider (may be contaminated by mock GPS)`)
+          return r
+        }
+      }
+
+      const fallbackResult = parseProviders(dump, ALL_PROVIDERS)
+      if (fallbackResult) {
+        log('warn', `[getRealLocation] using fallback provider (may be contaminated by mock GPS)`)
+        return fallbackResult
+      }
+
+      const jLat = dump.match(/"latitude":\s*(-?\d+\.?\d*)/)
+      const jLng = dump.match(/"longitude":\s*(-?\d+\.?\d*)/)
+      if (jLat && jLng) {
+        const lat = parseFloat(jLat[1]), lng = parseFloat(jLng[1])
+        if (!isNaN(lat) && Math.abs(lat) <= 90) return { lat, lng }
+      }
+
+      const latKv = dump.match(/\blat(?:itude)?[=:\s]+(-?\d{1,2}\.\d{4,})/i)
+      const lngKv = dump.match(/\blon(?:g(?:itude)?)?[=:\s]+(-?\d{1,3}\.\d{4,})/i)
+      if (latKv && lngKv) {
+        const lat = parseFloat(latKv[1]), lng = parseFloat(lngKv[1])
+        if (!isNaN(lat) && Math.abs(lat) <= 90) return { lat, lng }
+      }
+    } else {
+      log('warn', '[getRealLocation] no trusted provider available (strict mode), returning null')
     }
 
     return null
@@ -339,9 +419,16 @@ export class AdbService {
   closeShell(_serial: string): void {
     this.lastPushSuccess.delete(_serial)
     this.wifiHardened.delete(_serial)
+    this.masterLocationForcedOff.delete(_serial)
   }
   dispose(): void {
+    if (this.masterLocationForcedOff.size > 0) {
+      for (const serial of this.masterLocationForcedOff) {
+        void this.setMasterLocationEnabled(serial, true)
+      }
+    }
     this.lastPushSuccess.clear()
     this.wifiHardened.clear()
+    this.masterLocationForcedOff.clear()
   }
 }

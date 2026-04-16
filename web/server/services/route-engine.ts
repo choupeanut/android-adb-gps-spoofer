@@ -13,6 +13,9 @@ import type { RouteWaypoint, LocationUpdate, SpoofMode } from '@shared/types'
 const GLIDE_MAX_KM = 0.5
 /** Gaussian-like micro-jitter sigma in degrees (~1.7m at equator) */
 const JITTER_SIGMA = 0.000015
+// Push health monitoring - faster detection prevents GPS jump-back
+const ROUTE_PUSH_STALE_MS = 800  // Consider stale after 800ms (was 1500ms)
+const ROUTE_WATCHDOG_INTERVAL_MS = 200  // Check every 200ms (was 300ms)
 
 /** Apply micro-jitter to keep-alive pushes (W7) */
 function applyJitter(loc: LocationUpdate): LocationUpdate {
@@ -52,6 +55,10 @@ export class RouteEngine {
   private pushInFlight = false
   /** Backup keep-alive timer for dual-channel strategy */
   private backupKeepAliveTimer: ReturnType<typeof setInterval> | null = null
+  /** Route/glide watchdog timer to recover from push stalls. */
+  private pushWatchdogTimer: ReturnType<typeof setInterval> | null = null
+  /** Timestamp of last successful pushLocation call. */
+  private lastPushOkAt = 0
 
   constructor(adb: AdbService, serial: string) { this.adb = adb; this.serial = serial }
 
@@ -104,6 +111,14 @@ export class RouteEngine {
   }
 
   stop(): void {
+    void this.stopAndAwaitCleanup()
+  }
+
+  /**
+   * Stop route movement/state but keep test provider attached for handoff
+   * to another spoofing mode (teleport keep-alive / joystick).
+   */
+  stopForStay(): void {
     this.stopWander()
     this.state.finishedNaturally = false
     this.state.playing = false
@@ -111,12 +126,9 @@ export class RouteEngine {
     this.state.progressFraction = 0
     this.stopTimer()
     this.stopKeepAlive()
-    const serials = this.targetSerials
     this.currentLocation = null
     this.targetSerials = []
     this.notifyRenderer()
-    // W5: await cleanup (callers should await if needed)
-    Promise.all(serials.map((s) => this.adb.removeTestProvider(s))).catch(() => {})
   }
 
   async stopAndAwaitCleanup(): Promise<void> {
@@ -132,6 +144,7 @@ export class RouteEngine {
     this.targetSerials = []
     this.notifyRenderer()
     await Promise.all(serials.map((s) => this.adb.removeTestProvider(s))).catch(() => {})
+    await Promise.all(serials.map((s) => this.adb.maybeRestoreMasterLocation(s))).catch(() => {})
   }
 
   returnToRealGps(realLat: number, realLng: number, speedMs: number): void {
@@ -148,6 +161,7 @@ export class RouteEngine {
       this.currentLocation = null
       this.targetSerials = []
       Promise.all(serials.map((s) => this.adb.removeTestProvider(s))).catch(() => {})
+      Promise.all(serials.map((s) => this.adb.maybeRestoreMasterLocation(s))).catch(() => {})
       this.notifyRenderer()
     }
     if (!from) { cleanup(); return }
@@ -162,8 +176,54 @@ export class RouteEngine {
   setReverse(reverse: boolean): void { this.state.reverse = reverse }
   setSpeed(speedMs: number): void { this.speedMs = speedMs }
 
-  private startTimer(): void { this.stopTimer(); this.timer = setInterval(() => this.tick(), UPDATE_INTERVAL_MS) }
-  private stopTimer(): void { if (this.timer) { clearInterval(this.timer); this.timer = null } }
+  private startTimer(): void {
+    this.stopTimer()
+    this.timer = setInterval(() => this.tick(), UPDATE_INTERVAL_MS)
+    this.startPushWatchdog()
+  }
+
+  private stopTimer(): void {
+    if (this.timer) {
+      clearInterval(this.timer)
+      this.timer = null
+    }
+    this.stopPushWatchdog()
+  }
+
+  private startPushWatchdog(): void {
+    this.stopPushWatchdog()
+    this.lastPushOkAt = Date.now()
+    this.pushWatchdogTimer = setInterval(async () => {
+      if (!this.timer || !this.currentLocation || this.targetSerials.length === 0) return
+      if (this.pushInFlight) return
+      if ((Date.now() - this.lastPushOkAt) <= ROUTE_PUSH_STALE_MS) return
+
+      this.pushInFlight = true
+      try {
+        const emergencyLoc: LocationUpdate = { ...this.currentLocation, timestamp: Date.now() }
+        const results = await this.pushLocationToTargets(emergencyLoc)
+        if (results.some(Boolean)) {
+          log('warn', `[Route-watchdog] emergency push recovered stale stream for [${this.targetSerials.join(', ')}]`)
+          this.notifyRenderer()
+        }
+      } finally {
+        this.pushInFlight = false
+      }
+    }, ROUTE_WATCHDOG_INTERVAL_MS)
+  }
+
+  private stopPushWatchdog(): void {
+    if (this.pushWatchdogTimer) {
+      clearInterval(this.pushWatchdogTimer)
+      this.pushWatchdogTimer = null
+    }
+  }
+
+  private async pushLocationToTargets(loc: LocationUpdate): Promise<boolean[]> {
+    const results = await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
+    if (results.some(Boolean)) this.lastPushOkAt = Date.now()
+    return results
+  }
 
   private startKeepAlive(): void {
     this.stopKeepAlive()
@@ -176,7 +236,7 @@ export class RouteEngine {
       this.pushInFlight = true
       try {
         const loc = applyJitter({ ...this.currentLocation, speed: 0, bearing: 0, timestamp: Date.now() })
-        const results = await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
+        const results = await this.pushLocationToTargets(loc)
         results.forEach((ok, i) => { if (!ok) log('warn', `[Route-KA] push failed for ${this.targetSerials[i]}`) })
         this.notifyRenderer()
       } finally {
@@ -184,15 +244,15 @@ export class RouteEngine {
       }
     }, UPDATE_INTERVAL_MS)
 
-    // Backup channel: independent push every 2.5s as safety net
+    // Backup channel: independent push every 1s as safety net (was 2.5s)
     this.backupKeepAliveTimer = setInterval(async () => {
       if (!this.currentLocation || this.targetSerials.length === 0) return
       const loc = applyJitter({ ...this.currentLocation, speed: 0, bearing: 0, timestamp: Date.now() })
       await Promise.race([
         Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc))),
-        new Promise(resolve => setTimeout(resolve, 2000))
+        new Promise(resolve => setTimeout(resolve, 1500))
       ]).catch(() => {})
-    }, 2500)
+    }, 1000)
   }
 
   private stopKeepAlive(): void {
@@ -249,10 +309,11 @@ export class RouteEngine {
       const pos = interpolatePoints(fromLat, fromLng, to.lat, to.lng, progress)
       const loc: LocationUpdate = { lat: pos.lat, lng: pos.lng, altitude: to.altitude ?? 0, accuracy: DEFAULT_ACCURACY, bearing: brg, speed: this.speedMs, timestamp: Date.now() }
       this.currentLocation = loc
-      await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
+      await this.pushLocationToTargets(loc)
       this.notifyRenderer()
-      if (progress >= 1) { clearInterval(this.timer!); this.timer = null; onDone() }
+      if (progress >= 1) { this.stopTimer(); onDone() }
     }, UPDATE_INTERVAL_MS)
+    this.startPushWatchdog()
   }
 
   private glideBack(fromLat: number, fromLng: number, toLat: number, toLng: number, onDone: () => void): void {
@@ -261,15 +322,17 @@ export class RouteEngine {
     const brg = bearing(fromLat, fromLng, toLat, toLng)
     const stepKm = (this.speedMs * UPDATE_INTERVAL_MS) / 1_000_000
     let progress = 0
+    this.stopTimer()
     this.timer = setInterval(async () => {
       progress = Math.min(1, progress + stepKm / distKm)
       const pos = interpolatePoints(fromLat, fromLng, toLat, toLng, progress)
       const loc: LocationUpdate = { lat: pos.lat, lng: pos.lng, altitude: 0, accuracy: DEFAULT_ACCURACY, bearing: brg, speed: this.speedMs, timestamp: Date.now() }
       this.currentLocation = loc
-      await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
+      await this.pushLocationToTargets(loc)
       this.notifyRenderer()
       if (progress >= 1) { this.stopTimer(); onDone() }
     }, UPDATE_INTERVAL_MS)
+    this.startPushWatchdog()
   }
 
   private async tick(): Promise<void> {
@@ -314,7 +377,7 @@ export class RouteEngine {
     this.currentLocation = loc
     this.pushInFlight = true
     try {
-      const results = await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
+      const results = await this.pushLocationToTargets(loc)
       results.forEach((ok, i) => { if (!ok) log('warn', `[Route-tick] push failed for ${this.targetSerials[i]}`) })
     } finally {
       this.pushInFlight = false

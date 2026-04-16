@@ -94,21 +94,27 @@ export class DeviceEngineManager {
   }
 
   private async stopDevice(serial: string, pair: DeviceEngines, mode: 'stay' | 'graceful' | 'immediate'): Promise<void> {
-    pair.route.stop()
+    const routeLoc = pair.route.getCurrentLocation()
     switch (mode) {
       case 'stay':
-        if (pair.location.getCurrentLocation()) {
-          const loc = pair.location.getCurrentLocation()!
+        pair.route.stopForStay()
+        if (routeLoc || pair.location.getCurrentLocation()) {
+          const loc = routeLoc ?? pair.location.getCurrentLocation()!
           await pair.location.teleport([serial], loc.lat, loc.lng)
         }
         break
       case 'graceful': {
+        pair.route.stopForStay()
+        if (routeLoc) {
+          pair.location.updatePosition(routeLoc.lat, routeLoc.lng, routeLoc.bearing, routeLoc.speed)
+        }
         const realLoc = await this.adb.getRealLocation(serial)
         if (realLoc) pair.location.startGracefulStop([serial], realLoc.lat, realLoc.lng)
         else await pair.location.stop([serial])
         break
       }
       case 'immediate':
+        await pair.route.stopAndAwaitCleanup()
         await pair.location.stop([serial])
         break
     }

@@ -9,7 +9,9 @@ export const SPEED_PRESETS = {
   custom: 1.4
 } as const
 
-export const UPDATE_INTERVAL_MS = 1000
+// GPS update interval - faster prevents jump back to real GPS
+// 500ms = 2 updates/sec (aggressive anti-jumping)
+export const UPDATE_INTERVAL_MS = 500
 
 export const ADB_POLL_INTERVAL_MS = 3000
 

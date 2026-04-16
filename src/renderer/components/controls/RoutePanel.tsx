@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Play, Pause, CornerDownLeft, X, FileUp, Trash2 } from 'lucide-react'
+import { Play, Pause, CornerDownLeft, X, FileUp, Trash2, MapPin } from 'lucide-react'
 import { useRouteStore } from '../../stores/route.store'
 import { useDeviceStore } from '../../stores/device.store'
 import { useLocationStore } from '../../stores/location.store'
@@ -8,6 +8,7 @@ import { Button } from '../ui/Button'
 import { SegmentedControl, type SegmentedControlOption } from '../ui/SegmentedControl'
 import { Card } from '../ui/Card'
 import { ToggleButton } from '../ui/ToggleButton'
+import { Modal } from '../ui/Modal'
 
 type EndMode = 'loop' | 'wander' | 'none'
 
@@ -15,6 +16,7 @@ export function RoutePanel(): JSX.Element {
   const waypoints = useRouteStore((s) => s.waypoints)
   const playing = useRouteStore((s) => s.playing)
   const isPaused = useRouteStore((s) => s.isPaused)
+  const wandering = useRouteStore((s) => s.wandering)
   const loop = useRouteStore((s) => s.loop)
   const speedMs = useRouteStore((s) => s.speedMs)
   const returnOnFinish = useRouteStore((s) => s.returnOnFinish)
@@ -41,6 +43,7 @@ export function RoutePanel(): JSX.Element {
   const [stopCooldown, setStopCooldown] = useState<{ distKm: number; minutes: number } | null>(null)
   const [returnMsg, setReturnMsg] = useState('')
   const [isPlaying, setIsPlaying] = useState(false)
+  const [showClearDialog, setShowClearDialog] = useState(false)
 
   // Derived end-mode for mutually exclusive Loop / Wander
   const endMode: EndMode = loop ? 'loop' : wanderEnabled ? 'wander' : 'none'
@@ -128,10 +131,37 @@ export function RoutePanel(): JSX.Element {
   }
 
   const handleClearRoute = async (): Promise<void> => {
+    // If route is actively playing or paused, show confirmation dialog
+    if (playing || isPaused || wandering) {
+      setShowClearDialog(true)
+      return
+    }
+    // Not active — just clear waypoints
     await window.api.routeStop()
     clearWaypoints()
     setIsPaused(false)
     setStopCooldown(null)
+    setReturnMsg('')
+    setIsPlaying(false)
+  }
+
+  /** Clear route and stay at current spoofed position (keep mock GPS active). */
+  const handleClearStay = async (): Promise<void> => {
+    setShowClearDialog(false)
+    await window.api.routeStopStay()
+    clearWaypoints()
+    setIsPaused(false)
+    setStopCooldown(null)
+    setReturnMsg('')
+    setIsPlaying(false)
+  }
+
+  /** Clear route and remove mock GPS (phone returns to real location). */
+  const handleClearRemove = async (): Promise<void> => {
+    setShowClearDialog(false)
+    await window.api.routeStop()
+    clearWaypoints()
+    setIsPaused(false)
     setReturnMsg('')
     setIsPlaying(false)
     const from = location ?? realGpsLocation
@@ -219,7 +249,7 @@ export function RoutePanel(): JSX.Element {
         <Button
           variant="secondary"
           onClick={handleClearRoute}
-          disabled={waypoints.length === 0 && !playing && !isPaused}
+          disabled={waypoints.length === 0 && !playing && !isPaused && !wandering}
           title="Clear route and reset"
         >
           <Trash2 size={16} />
@@ -303,7 +333,7 @@ export function RoutePanel(): JSX.Element {
             <button
               onClick={clearWaypoints}
               disabled={playing || isPaused}
-              className={`text-xs text-danger hover:underline flex items-center gap-1 transition-colors ${playing || isPaused ? 'opacity-40 cursor-not-allowed pointer-events-none' : ''}`}
+              className={`text-xs text-danger hover:underline flex items-center gap-1 transition-colors ${playing || isPaused || wandering ? 'opacity-40 cursor-not-allowed pointer-events-none' : ''}`}
             >
               <Trash2 size={12} /> Clear all
             </button>
@@ -345,6 +375,40 @@ export function RoutePanel(): JSX.Element {
       >
         <FileUp size={14} /> Import GPX
       </button>
+
+      {/* Clear route confirmation dialog */}
+      <Modal
+        isOpen={showClearDialog}
+        onClose={() => setShowClearDialog(false)}
+        title="Clear Route"
+        description="Route is active. What would you like to do?"
+      >
+        <div className="flex flex-col gap-2">
+          <Button
+            variant="primary"
+            onClick={handleClearStay}
+            className="w-full justify-center"
+          >
+            <MapPin size={16} />
+            Stay at Current Location
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={handleClearRemove}
+            className="w-full justify-center text-danger"
+          >
+            <X size={16} />
+            Stop &amp; Remove Mock GPS
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => setShowClearDialog(false)}
+            className="w-full justify-center"
+          >
+            Cancel
+          </Button>
+        </div>
+      </Modal>
     </div>
   )
 }

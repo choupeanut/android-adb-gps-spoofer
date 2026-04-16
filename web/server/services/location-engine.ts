@@ -122,16 +122,16 @@ export class LocationEngine {
       }
     }, UPDATE_INTERVAL_MS)
 
-    // Backup channel: independent push every 2.5s as safety net (dual-channel)
+    // Backup channel: independent push every 1s as safety net (was 2.5s, dual-channel)
     this.backupTimer = setInterval(async () => {
       if (!this.currentLocation || this.mode !== 'teleport') return
       const loc = applyJitter({ ...this.currentLocation, speed: 0, bearing: 0, timestamp: Date.now() })
       // Use Promise.race with timeout so backup never blocks forever
       await Promise.race([
         Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc))),
-        new Promise(resolve => setTimeout(resolve, 2000))
+        new Promise(resolve => setTimeout(resolve, 1500))
       ]).catch(() => {})
-    }, 2500)
+    }, 1000)
   }
 
   startContinuousUpdate(serials: string[]): void {
@@ -175,6 +175,7 @@ export class LocationEngine {
     this.mode = 'idle'
     // W5: await removeTestProvider to prevent stale providers on restart
     await Promise.all(serials.map((s) => this.adb.removeTestProvider(s))).catch(() => {})
+    await Promise.all(serials.map((s) => this.adb.maybeRestoreMasterLocation(s))).catch(() => {})
     this.currentLocation = null
     this.targetSerials = []
     this.notifyRenderer()

@@ -155,6 +155,7 @@ const api = {
     wsInvoke('route-play', serials, speedMs, fromLat, fromLng),
   routePause: () => wsInvoke('route-pause'),
   routeStop: () => wsInvoke('route-stop'),
+  routeStopStay: () => wsInvoke('route-stop-stay'),
   routeReturnToGps: (realLat: number, realLng: number, speedMs: number) =>
     wsInvoke('route-return-to-gps', realLat, realLng, speedMs),
   routeSetLoop: (loop: boolean) => wsInvoke('route-set-loop', loop),

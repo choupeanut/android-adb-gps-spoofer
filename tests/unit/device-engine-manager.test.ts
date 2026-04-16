@@ -7,6 +7,8 @@ const mockAdb = {
   pushLocation: vi.fn().mockResolvedValue(undefined),
   enableMockLocation: vi.fn().mockResolvedValue(true),
   removeTestProvider: vi.fn().mockResolvedValue(undefined),
+  maybeDisableMasterLocationForSpoof: vi.fn().mockResolvedValue(undefined),
+  maybeRestoreMasterLocation: vi.fn().mockResolvedValue(undefined),
   getRealLocation: vi.fn().mockResolvedValue(null),
   runShell: vi.fn().mockResolvedValue('')
 } as any

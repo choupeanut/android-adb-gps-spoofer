@@ -35,6 +35,7 @@ const api = {
     ipcRenderer.invoke('route-play', serials, speedMs, fromLat, fromLng),
   routePause: () => ipcRenderer.invoke('route-pause'),
   routeStop: () => ipcRenderer.invoke('route-stop'),
+  routeStopStay: () => ipcRenderer.invoke('route-stop-stay'),
   routeReturnToGps: (realLat: number, realLng: number, speedMs: number) =>
     ipcRenderer.invoke('route-return-to-gps', realLat, realLng, speedMs),
   routeSetLoop: (loop: boolean) => ipcRenderer.invoke('route-set-loop', loop),
