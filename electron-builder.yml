@@ -2,6 +2,9 @@ appId: com.peanutchou.android-adb-gps-spoofer
 productName: Android ADB GPS Spoofer
 copyright: Copyright © 2026 peanutchou
 
+# Disable electron-builder's implicit GitHub publish (we use softprops/action-gh-release)
+publish: null
+
 directories:
   buildResources: resources
   output: dist
