@@ -58,6 +58,7 @@ jobs:
   # ── Web server Docker image ────────────────────────────────────────────
   build-docker:
     runs-on: ubuntu-latest
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
@@ -91,6 +92,7 @@ jobs:
   # ── Create GitHub Release ──────────────────────────────────────────────
   create-release:
     needs: [build-desktop, build-docker]
+    if: always() && needs.build-desktop.result == 'success'
     runs-on: ubuntu-latest
 
     steps:

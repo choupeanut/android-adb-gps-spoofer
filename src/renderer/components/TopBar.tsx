@@ -46,11 +46,6 @@ export function TopBar(): JSX.Element {
 
   useEffect(() => {
     window.api.getAppVersion().then((v: string) => setAppVersion(v)).catch(() => {})
-  }, [])  
-  const [appVersion, setAppVersion] = useState<string>('')
-
-  useEffect(() => {
-    window.api.getAppVersion().then((v: string) => setAppVersion(v)).catch(() => {})
   }, [])
   const deviceDropdownRef = useRef<HTMLDivElement>(null)
   const customSliderRef = useRef<HTMLDivElement>(null)
