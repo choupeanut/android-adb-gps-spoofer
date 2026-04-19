@@ -45,3 +45,6 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Android ADB GPS Spoofer
+
+portable:
+  artifactName: "${productName} ${version} Portable.${ext}"
