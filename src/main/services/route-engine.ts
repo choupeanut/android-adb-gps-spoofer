@@ -417,23 +417,25 @@ export class RouteEngine {
     const fromIdx = this.state.reverse ? idx + 1 : idx
     const toIdx = this.state.reverse ? idx : idx + 1
 
-    if (toIdx >= wp.length || fromIdx < 0) {
-      if (this.state.loop) {
-        this.state.currentWaypointIndex = 0
-        this.state.progressFraction = 0
+    // In loop mode, wrap the closing segment so the path is traversed (not teleported):
+    //   forward: last waypoint → first waypoint (toIdx = 0)
+    //   reverse: first waypoint → last waypoint (fromIdx = wp.length - 1)
+    const effectiveFromIdx = this.state.loop && fromIdx < 0 ? wp.length - 1 : fromIdx
+    const effectiveToIdx = this.state.loop && toIdx >= wp.length ? 0 : toIdx
+
+    if (effectiveToIdx >= wp.length || effectiveFromIdx < 0 || effectiveToIdx < 0) {
+      // Non-loop end of route
+      this.state.finishedNaturally = true
+      if (this.wanderEnabled) {
+        this.startWander()
       } else {
-        this.state.finishedNaturally = true
-        if (this.wanderEnabled) {
-          this.startWander()
-        } else {
-          this.pause()
-        }
+        this.pause()
       }
       return
     }
 
-    const from = wp[fromIdx]
-    const to = wp[toIdx]
+    const from = wp[effectiveFromIdx]
+    const to = wp[effectiveToIdx]
     const segDistKm = haversineDistance(from.lat, from.lng, to.lat, to.lng)
 
     if (segDistKm === 0) {
@@ -475,7 +477,13 @@ export class RouteEngine {
     // Advance segment index after pushing location so the position is correct this tick.
     if (this.state.progressFraction >= 1) {
       this.state.progressFraction = 0
-      this.state.currentWaypointIndex += this.state.reverse ? -1 : 1
+      if (this.state.loop) {
+        // Modular wrap: handles both forward (last→first) and reverse (first→last) loop-back
+        const nextIdx = idx + (this.state.reverse ? -1 : 1)
+        this.state.currentWaypointIndex = ((nextIdx % wp.length) + wp.length) % wp.length
+      } else {
+        this.state.currentWaypointIndex += this.state.reverse ? -1 : 1
+      }
     }
   }
 

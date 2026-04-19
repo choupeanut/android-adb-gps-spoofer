@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Play, Pause, CornerDownLeft, X, FileUp, Trash2, MapPin } from 'lucide-react'
 import { useRouteStore } from '../../stores/route.store'
 import { useDeviceStore } from '../../stores/device.store'
@@ -44,6 +44,38 @@ export function RoutePanel(): JSX.Element {
   const [returnMsg, setReturnMsg] = useState('')
   const [isPlaying, setIsPlaying] = useState(false)
   const [showClearDialog, setShowClearDialog] = useState(false)
+
+  // Effective target serials: selectedSerials if non-empty, otherwise [activeDevice]
+  const effectiveTargets = useMemo(() => {
+    if (selectedSerials.length > 0) return selectedSerials
+    return activeDevice ? [activeDevice] : []
+  }, [selectedSerials, activeDevice])
+
+  // When a device is (re-)added while the route is actively playing, auto-resume routing on it.
+  const prevTargetsRef = useRef<string[]>([])
+  const wasPlayingRef = useRef(false)
+  useEffect(() => {
+    const activelyPlaying = playing && !isPaused
+    const wasPlaying = wasPlayingRef.current
+    wasPlayingRef.current = activelyPlaying
+
+    if (activelyPlaying && wasPlaying && waypoints.length >= 2) {
+      const added = effectiveTargets.filter((s) => !prevTargetsRef.current.includes(s))
+      if (added.length > 0) {
+        ;(async (): Promise<void> => {
+          for (const serial of added) {
+            await window.api.enableMockLocation(serial)
+            await window.api.routeSetWaypoints(waypoints, [serial])
+            window.api.routeSetLoop(loop)
+            window.api.routeSetWander(wanderEnabled, wanderRadiusM)
+            await window.api.routePlay([serial], speedMs)
+          }
+        })()
+      }
+    }
+
+    prevTargetsRef.current = effectiveTargets
+  }, [effectiveTargets, playing, isPaused, waypoints, speedMs, loop, wanderEnabled, wanderRadiusM])
 
   // Derived end-mode for mutually exclusive Loop / Wander
   const endMode: EndMode = loop ? 'loop' : wanderEnabled ? 'wander' : 'none'
