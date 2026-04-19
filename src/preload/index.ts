@@ -4,6 +4,9 @@ import type { RouteWaypoint } from '../shared/types'
 export type GpsSpoofApi = typeof api
 
 const api = {
+  // App
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
   // Device
   getDevices: () => ipcRenderer.invoke('get-devices'),
   setActiveDevice: (serial: string) => ipcRenderer.invoke('set-active-device', serial),

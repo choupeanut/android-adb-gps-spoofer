@@ -216,6 +216,17 @@ const api = {
   getLogs: () => wsInvoke('get-logs'),
   onLogEntry: (cb: EventCallback) => onEvent('log-entry', cb),
 
+  // App version (web returns server-provided version via meta tag or env)
+  getAppVersion: async (): Promise<string> => {
+    try {
+      const res = await fetch('/api/version')
+      const data = await res.json()
+      return data.version || 'web'
+    } catch {
+      return 'web'
+    }
+  },
+
   // Client IP detection (web-only)
   getClientIp: async (): Promise<string | null> => {
     try {

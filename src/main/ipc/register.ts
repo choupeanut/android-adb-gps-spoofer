@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, app } from 'electron'
 import { DeviceManager } from '../services/device-manager'
 import { DeviceEngineManager } from '../services/device-engine-manager'
 import { Database } from '../services/db'
@@ -28,6 +28,10 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
   })
 
   registerGpxHandlers()
+
+  // ─── App info ─────────────────────────────────────────────────────────────
+
+  ipcMain.handle('get-app-version', () => app.getVersion())
 
   // ─── Device ──────────────────────────────────────────────────────────────
 

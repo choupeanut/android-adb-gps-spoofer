@@ -395,6 +395,11 @@ app.post('/api/gpx/parse', (req, res) => {
   }
 })
 
+// App version
+app.get('/api/version', (_req, res) => {
+  res.json({ version: process.env.APP_VERSION || 'dev' })
+})
+
 // Return the client's LAN IP (useful for auto-filling ADB connect)
 app.get('/api/client-ip', (req, res) => {
   let ip = req.headers['x-forwarded-for'] as string | undefined

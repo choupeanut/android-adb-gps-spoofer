@@ -9,19 +9,9 @@ permissions:
   contents: write
 
 jobs:
-  # ── Desktop builds (Electron) ──────────────────────────────────────────
+  # ── Desktop builds (Electron — Windows) ─────────────────────────────
   build-desktop:
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            cmd: pnpm dist:win
-            artifact: dist/*.exe
-          - os: ubuntu-latest
-            cmd: pnpm dist:linux
-            artifact: dist/*.AppImage
-
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -38,14 +28,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build & package
-        run: ${{ matrix.cmd }}
+      - name: Build & package (installer + portable)
+        run: pnpm dist:win
 
-      - name: Upload desktop artifacts
+      - name: List dist artifacts
+        shell: bash
+        run: ls -lh dist/*.exe
+
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.os }}
-          path: ${{ matrix.artifact }}
+          name: win-installer
+          path: dist/*Setup*.exe
+
+      - name: Upload portable
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-portable
+          path: dist/*Portable*.exe
 
   # ── Web server Docker image ────────────────────────────────────────────
   build-docker:
@@ -72,6 +72,8 @@ jobs:
         with:
           context: .
           push: true
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.VERSION }}
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/android-adb-gps-spoofer:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/android-adb-gps-spoofer:${{ steps.version.outputs.VERSION }}
@@ -86,14 +88,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download installer artifact
         uses: actions/download-artifact@v4
         with:
+          name: win-installer
           path: release-assets
-          merge-multiple: true
+
+      - name: Download portable artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: win-portable
+          path: release-assets
+
+      - name: List release assets
+        run: ls -lh release-assets/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          name: "v${{ steps.version.outputs.VERSION }}"
+          body: |
+            ## Android ADB GPS Spoofer v${{ steps.version.outputs.VERSION }}
+
+            ### Windows Downloads
+            | File | Description |
+            |------|-------------|
+            | `*Setup*.exe` | Windows Installer (NSIS) — recommended |
+            | `*Portable*.exe` | Windows Portable — no installation needed |
+
+            ### Docker (Web Server)
+            ```bash
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/android-adb-gps-spoofer:${{ steps.version.outputs.VERSION }}
+            docker run -d --privileged -p 3000:3000 -v /dev/bus/usb:/dev/bus/usb \
+              ${{ secrets.DOCKERHUB_USERNAME }}/android-adb-gps-spoofer:${{ steps.version.outputs.VERSION }}
+            ```
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: release-assets/*

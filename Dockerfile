@@ -40,6 +40,10 @@ RUN pnpm install --prod --no-frozen-lockfile
 COPY --from=builder /app/dist/server ./dist/server
 COPY --from=builder /app/dist/client ./dist/client
 
+# Build-time version injection
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
+
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV DATA_DIR=/data

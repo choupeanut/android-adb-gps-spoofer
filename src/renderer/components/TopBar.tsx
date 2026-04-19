@@ -42,6 +42,16 @@ export function TopBar(): JSX.Element {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showConnectionDialog, setShowConnectionDialog] = useState(false)
   const [deviceStates, setDeviceStates] = useState<Record<string, { mode: string }>>({})
+  const [appVersion, setAppVersion] = useState<string>('')
+
+  useEffect(() => {
+    window.api.getAppVersion().then((v: string) => setAppVersion(v)).catch(() => {})
+  }, [])  
+  const [appVersion, setAppVersion] = useState<string>('')
+
+  useEffect(() => {
+    window.api.getAppVersion().then((v: string) => setAppVersion(v)).catch(() => {})
+  }, [])
   const deviceDropdownRef = useRef<HTMLDivElement>(null)
   const customSliderRef = useRef<HTMLDivElement>(null)
   const shortcutsRef = useRef<HTMLDivElement>(null)
@@ -250,6 +260,13 @@ export function TopBar(): JSX.Element {
             </div>
           )}
         </div>
+
+        {/* Version badge */}
+        {appVersion && (
+          <span className="text-[10px] text-foreground-muted hidden md:block font-mono shrink-0 select-none">
+            v{appVersion}
+          </span>
+        )}
 
         {/* Stop All */}
         <button
