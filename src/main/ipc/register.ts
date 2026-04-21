@@ -4,7 +4,8 @@ import { DeviceEngineManager } from '../services/device-engine-manager'
 import { Database } from '../services/db'
 import { registerGpxHandlers } from './gpx.ipc'
 import { registerHandler } from '../server/index'
-import { getLogs } from '../logger'
+import { getLogs, getLogDir } from '../logger'
+import { log } from '../logger'
 import type { RouteWaypoint } from '@shared/types'
 
 /**
@@ -20,7 +21,15 @@ function handle(channel: string, handler: (...args: any[]) => any): void {
 
 export function registerIpcHandlers(deviceManager: DeviceManager): void {
   const engineManager = new DeviceEngineManager(deviceManager.adbService)
-  const db = new Database()
+
+  let db: Database
+  try {
+    db = new Database()
+  } catch (err: any) {
+    // SQLite failure must not prevent IPC registration — ADB features still work
+    log('error', `[IPC] Database init failed: ${err.message}`)
+    db = new Database(true) // graceful no-op stub
+  }
 
   // Prune engines when devices disconnect
   deviceManager.onDevicesChanged((connectedSerials) => {
@@ -364,4 +373,5 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
 
   // ─── Logs ─────────────────────────────────────────────────────────────────
   handle('get-logs', () => getLogs())
+  handle('get-log-dir', () => getLogDir())
 }

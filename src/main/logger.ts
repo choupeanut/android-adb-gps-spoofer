@@ -1,4 +1,6 @@
 import { broadcast } from './services/broadcast'
+import { app } from 'electron'
+import { join } from 'path'
 
 export type LogLevel = 'info' | 'ok' | 'warn' | 'error'
 
@@ -28,4 +30,12 @@ export function log(level: LogLevel, msg: string): void {
 
 export function getLogs(): LogEntry[] {
   return [...entries]
+}
+
+export function getLogDir(): string {
+  try {
+    return join(app.getPath('userData'), 'logs')
+  } catch {
+    return ''
+  }
 }

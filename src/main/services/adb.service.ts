@@ -1,7 +1,7 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { existsSync } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { log } from '../logger'
 import type { DeviceInfo, LocationUpdate } from '@shared/types'
@@ -45,6 +45,21 @@ export class AdbService {
   constructor() {
     this.adbPath = findAdb()
     log('info', `[AdbService] using adb: ${this.adbPath}`)
+    // Health-check: run `adb version` immediately so any spawn/path errors surface in logs
+    this.healthCheck()
+  }
+
+  private healthCheck(): void {
+    const opts = this.execOpts()
+    execFileAsync(this.adbPath, ['version'], opts)
+      .then(({ stdout }) => log('info', `[AdbService] health-check OK — ${stdout.split('\n')[0].trim()}`))
+      .catch((err: any) => log('error', `[AdbService] health-check FAILED (code=${err.code ?? 'none'} signal=${err.signal ?? 'none'}): ${err.message}`))
+  }
+
+  /** Common options for execFileAsync: correct cwd so Windows DLL load order works. */
+  private execOpts(timeoutMs = 5000): { timeout: number; cwd?: string } {
+    const cwd = this.adbPath !== 'adb' ? dirname(this.adbPath) : undefined
+    return { timeout: timeoutMs, ...(cwd ? { cwd } : {}) }
   }
 
   /**
@@ -58,12 +73,12 @@ export class AdbService {
       await execFileAsync(
         this.adbPath,
         ['-s', serial, 'shell', 'settings', 'put', 'global', 'wifi_sleep_policy', '2'],
-        { timeout: 3000 }
+        this.execOpts(3000)
       ).catch(() => {})
       await execFileAsync(
         this.adbPath,
         ['-s', serial, 'shell', 'dumpsys', 'deviceidle', 'whitelist', '+com.android.shell'],
-        { timeout: 3000 }
+        this.execOpts(3000)
       ).catch(() => {})
       this.wifiHardened.add(serial)
       log('info', `[ADB] WiFi hardened for ${serial}`)
@@ -84,8 +99,8 @@ export class AdbService {
     const ip = serial.split(':')[0]
     const port = serial.split(':')[1] || '5555'
     try {
-      await execFileAsync(this.adbPath, ['disconnect', serial], { timeout: 3000 }).catch(() => {})
-      const { stdout } = await execFileAsync(this.adbPath, ['connect', `${ip}:${port}`], { timeout: 8000 })
+      await execFileAsync(this.adbPath, ['disconnect', serial], this.execOpts(3000)).catch(() => {})
+      const { stdout } = await execFileAsync(this.adbPath, ['connect', `${ip}:${port}`], this.execOpts(8000))
       const ok = stdout.includes('connected')
       if (ok) log('info', `[ADB] Reconnected WiFi: ${serial}`)
       return ok
@@ -103,7 +118,7 @@ export class AdbService {
       await execFileAsync(
         this.adbPath,
         ['-s', serial, 'shell', 'cmd', 'location', 'set-location-enabled', String(enabled)],
-        { timeout: 4000 }
+        this.execOpts(4000)
       )
       return true
     } catch {
@@ -112,7 +127,7 @@ export class AdbService {
         await execFileAsync(
           this.adbPath,
           ['-s', serial, 'shell', 'cmd', 'location', 'set-location-enabled', String(enabled), '--user', '0'],
-          { timeout: 4000 }
+          this.execOpts(4000)
         )
         return true
       } catch (err: any) {
@@ -145,7 +160,7 @@ export class AdbService {
 
   async listDevices(): Promise<DeviceInfo[]> {
     try {
-      const { stdout } = await execFileAsync(this.adbPath, ['devices', '-l'], { timeout: 5000 })
+      const { stdout } = await execFileAsync(this.adbPath, ['devices', '-l'], this.execOpts(5000))
       const lines = stdout.trim().split('\n').slice(1)
       const devices: DeviceInfo[] = []
 
@@ -171,11 +186,12 @@ export class AdbService {
             const { stdout: ver } = await execFileAsync(
               this.adbPath,
               ['-s', serial, 'shell', 'getprop', 'ro.build.version.release'],
-              { timeout: 3000 }
+              this.execOpts(3000)
             )
             androidVersion = ver.trim()
-          } catch {
+          } catch (err: any) {
             androidVersion = 'unknown'
+            log('warn', `[ADB] getprop ${serial}: ${err.code ?? ''} ${err.message}`)
           }
         }
 
@@ -183,7 +199,8 @@ export class AdbService {
       }
 
       return devices
-    } catch {
+    } catch (err: any) {
+      log('error', `[ADB] listDevices failed (code=${err.code ?? 'none'}): ${err.message}`)
       return []
     }
   }
@@ -197,7 +214,7 @@ export class AdbService {
       const { stdout } = await execFileAsync(
         this.adbPath,
         ['-s', serial, 'shell', 'echo', 'pong'],
-        { timeout: 8000 }
+        this.execOpts(8000)
       )
       const latencyMs = Date.now() - start
       const ok = stdout.trim() === 'pong'
@@ -223,7 +240,7 @@ export class AdbService {
       await execFileAsync(
         this.adbPath,
         ['-s', serial, 'shell', 'appops', 'set', 'com.android.shell', 'android:mock_location', 'allow'],
-        { timeout: 5000 }
+        this.execOpts(5000)
       )
       log.push('✓ appops mock_location allow')
     } catch (err: any) {
@@ -232,7 +249,7 @@ export class AdbService {
         await execFileAsync(
           this.adbPath,
           ['-s', serial, 'shell', 'appops', 'set', 'com.android.shell', 'mock_location', 'allow'],
-          { timeout: 5000 }
+          this.execOpts(5000)
         )
         log.push('✓ appops mock_location allow (legacy)')
       } catch (err2: any) {
@@ -246,7 +263,7 @@ export class AdbService {
       const { stdout, stderr } = await execFileAsync(
         this.adbPath,
         ['-s', serial, 'shell', 'cmd', 'location', 'providers', 'add-test-provider', 'gps'],
-        { timeout: 5000 }
+        this.execOpts(5000)
       )
       log.push(`✓ add-test-provider gps${stdout.trim() ? ': ' + stdout.trim() : ''}`)
     } catch (err: any) {
@@ -259,7 +276,7 @@ export class AdbService {
       await execFileAsync(
         this.adbPath,
         ['-s', serial, 'shell', 'cmd', 'location', 'providers', 'set-test-provider-enabled', 'gps', 'true'],
-        { timeout: 5000 }
+        this.execOpts(5000)
       )
       log.push('✓ set-test-provider-enabled gps true')
     } catch (err: any) {
@@ -294,7 +311,7 @@ export class AdbService {
           '--accuracy', String(loc.accuracy),
           '--time',     String(loc.timestamp)
         ],
-        { timeout: 3000 }
+        this.execOpts(3000)
       )
       this.lastPushSuccess.set(serial, Date.now())
       return true
@@ -308,7 +325,7 @@ export class AdbService {
             'cmd', 'location', 'providers', 'set-test-provider-location', 'gps',
             `${loc.lat},${loc.lng}`
           ],
-          { timeout: 3000 }
+          this.execOpts(3000)
         )
         this.lastPushSuccess.set(serial, Date.now())
         return true
@@ -324,7 +341,7 @@ export class AdbService {
       await execFileAsync(
         this.adbPath,
         ['-s', serial, 'shell', 'cmd', 'location', 'providers', 'remove-test-provider', 'gps'],
-        { timeout: 5000 }
+        this.execOpts(5000)
       )
     } catch {
       // ignore — provider may already be gone
@@ -334,19 +351,24 @@ export class AdbService {
   // ─── Wi-Fi ADB ────────────────────────────────────────────────────────────
 
   async connectWifi(ip: string, port = 5555): Promise<boolean> {
+    log('info', `[ADB] connect ${ip}:${port}`)
     try {
-      const { stdout } = await execFileAsync(this.adbPath, ['connect', `${ip}:${port}`], { timeout: 10000 })
-      return stdout.includes('connected')
-    } catch {
+      const { stdout } = await execFileAsync(this.adbPath, ['connect', `${ip}:${port}`], this.execOpts(10000))
+      const ok = stdout.includes('connected')
+      log(ok ? 'ok' : 'warn', `[ADB] connect ${ip}:${port} → ${stdout.trim()}`)
+      return ok
+    } catch (err: any) {
+      log('error', `[ADB] connectWifi failed (code=${err.code ?? 'none'}): ${err.message}`)
       return false
     }
   }
 
   async enableTcpip(serial: string, port = 5555): Promise<boolean> {
     try {
-      await execFileAsync(this.adbPath, ['-s', serial, 'tcpip', String(port)], { timeout: 5000 })
+      await execFileAsync(this.adbPath, ['-s', serial, 'tcpip', String(port)], this.execOpts(5000))
       return true
-    } catch {
+    } catch (err: any) {
+      log('warn', `[ADB] enableTcpip ${serial}: ${err.message}`)
       return false
     }
   }
@@ -356,11 +378,12 @@ export class AdbService {
       const { stdout } = await execFileAsync(
         this.adbPath,
         ['-s', serial, 'shell', 'ip', 'route'],
-        { timeout: 5000 }
+        this.execOpts(5000)
       )
       const match = stdout.match(/src (\d+\.\d+\.\d+\.\d+)/)
       return match ? match[1] : null
-    } catch {
+    } catch (err: any) {
+      log('warn', `[ADB] getDeviceIp ${serial}: ${err.message}`)
       return null
     }
   }
@@ -377,7 +400,7 @@ export class AdbService {
     // Run a shell command but never throw — return stdout even on non-zero exit
     const safeRun = async (args: string[]): Promise<string> => {
       try {
-        const { stdout } = await execFileAsync(this.adbPath, args, { timeout: 6000 })
+        const { stdout } = await execFileAsync(this.adbPath, args, this.execOpts(6000))
         return stdout
       } catch (err: any) {
         // execFileAsync throws on non-zero exit code; salvage any stdout it captured

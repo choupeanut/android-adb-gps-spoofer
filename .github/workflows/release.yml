@@ -38,6 +38,9 @@ jobs:
 
       - name: Build & package (installer + portable)
         run: pnpm dist:win
+        env:
+          # Prevent signtool from auto-picking any machine certificate — we don't sign
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: List dist artifacts
         shell: bash

@@ -87,6 +87,7 @@ const api = {
 
   // Logs
   getLogs: () => ipcRenderer.invoke('get-logs'),
+  getLogDir: () => ipcRenderer.invoke('get-log-dir'),
   onLogEntry: (callback: (entry: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, entry: unknown): void => callback(entry)
     ipcRenderer.on('log-entry', handler)

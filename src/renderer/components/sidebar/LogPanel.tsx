@@ -26,12 +26,16 @@ export function LogPanel(): JSX.Element {
   const [autoScroll, setAutoScroll] = useState(true)
   const [copied, setCopied] = useState(false)
   const [filter, setFilter] = useState<string>('all')
+  const [logDir, setLogDir] = useState<string>('')
 
   // Load existing logs on mount
   useEffect(() => {
     window.api.getLogs().then((logs: any[]) => {
       useLogStore.getState().setEntries(logs)
     })
+    if ((window.api as any).getLogDir) {
+      ;(window.api as any).getLogDir().then((dir: string) => setLogDir(dir)).catch(() => {})
+    }
   }, [])
 
   // Auto-scroll to bottom when new entries arrive
@@ -116,9 +120,16 @@ export function LogPanel(): JSX.Element {
       </div>
 
       {/* Status bar */}
-      <div className="px-3 py-1 border-t border-border text-[10px] text-muted-foreground flex-shrink-0">
-        {entries.length} entries
-        {filtered.length !== entries.length && ` (${filtered.length} shown)`}
+      <div className="px-3 py-1 border-t border-border text-[10px] text-muted-foreground flex-shrink-0 space-y-0.5">
+        <div>
+          {entries.length} entries
+          {filtered.length !== entries.length && ` (${filtered.length} shown)`}
+        </div>
+        {logDir && (
+          <div className="truncate" title={logDir}>
+            Log files: <span className="text-foreground/70 select-all">{logDir}</span>
+          </div>
+        )}
       </div>
     </div>
   )
