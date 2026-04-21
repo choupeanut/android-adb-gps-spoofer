@@ -13,15 +13,14 @@ files:
   - out/**/*
   - package.json
 
-extraResources:
-  - from: resources/platform-tools/
-    to: platform-tools
-    filter:
-      - adb.exe
-      - AdbWinApi.dll
-      - AdbWinUsbApi.dll
-
 win:
+  extraResources:
+    - from: resources/platform-tools/
+      to: platform-tools
+      filter:
+        - adb.exe
+        - AdbWinApi.dll
+        - AdbWinUsbApi.dll
   target:
     - target: nsis
       arch:
@@ -32,6 +31,11 @@ win:
   icon: resources/icon.ico
 
 linux:
+  extraResources:
+    - from: resources/platform-tools-linux/
+      to: platform-tools
+      filter:
+        - adb
   target:
     - target: AppImage
       arch:

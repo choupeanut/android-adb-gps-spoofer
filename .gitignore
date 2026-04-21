@@ -51,3 +51,4 @@ docker-build.log
 # ADB binaries (users download separately)
 resources/platform-tools/*.exe
 resources/platform-tools/*.dll
+resources/platform-tools-linux/

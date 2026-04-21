@@ -58,6 +58,52 @@ jobs:
           name: win-portable
           path: dist/*Portable*.exe
 
+  # ── Desktop builds (Electron — Linux AppImage) ─────────────────────
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Inject version into package.json
+        run: npm pkg set version=${{ steps.version.outputs.VERSION }}
+
+      - name: Download Linux ADB binary
+        run: |
+          mkdir -p resources/platform-tools-linux
+          curl -fsSL https://dl.google.com/android/repository/platform-tools-latest-linux.zip -o /tmp/pt.zip
+          unzip -j /tmp/pt.zip platform-tools/adb -d resources/platform-tools-linux/
+          chmod +x resources/platform-tools-linux/adb
+          echo "ADB version: $(resources/platform-tools-linux/adb version)"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build & package (AppImage)
+        run: pnpm dist:linux
+
+      - name: List dist artifacts
+        run: ls -lh dist/*.AppImage
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: dist/*.AppImage
+
   # ── Web server Docker image ────────────────────────────────────────────
   build-docker:
     runs-on: ubuntu-latest
@@ -94,8 +140,8 @@ jobs:
 
   # ── Create GitHub Release ──────────────────────────────────────────────
   create-release:
-    needs: [build-desktop, build-docker]
-    if: always() && needs.build-desktop.result == 'success'
+    needs: [build-desktop, build-linux, build-docker]
+    if: always() && needs.build-desktop.result == 'success' && needs.build-linux.result == 'success'
     runs-on: ubuntu-latest
 
     steps:
@@ -117,6 +163,12 @@ jobs:
           name: win-portable
           path: release-assets
 
+      - name: Download Linux AppImage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-appimage
+          path: release-assets
+
       - name: List release assets
         run: ls -lh release-assets/
 
@@ -132,6 +184,11 @@ jobs:
             |------|-------------|
             | `*Setup*.exe` | Windows Installer (NSIS) — recommended |
             | `*Portable*.exe` | Windows Portable — no installation needed |
+
+            ### Linux Downloads
+            | File | Description |
+            |------|-------------|
+            | `*.AppImage` | Linux AppImage — `chmod +x *.AppImage && ./Android*.AppImage` |
 
             ### Docker (Web Server)
             ```bash
