@@ -4,14 +4,27 @@ import { existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { log } from '../logger'
-import type { DeviceInfo, LocationUpdate } from '@shared/types'
+import type { AdbConnectResult, AdbDiagnostics, DeviceInfo, LocationUpdate } from '@shared/types'
 
 const execFileAsync = promisify(execFile)
 
-function findAdb(): string {
+interface AdbResolution {
+  adbPath: string
+  bundledPath?: string
+  bundledExists: boolean
+  usingBundled: boolean
+  usingSystemAdb: boolean
+}
+
+function resolveAdb(): AdbResolution {
   if (process.env.ADB_PATH) {
     console.log('[ADB] Using ADB_PATH from env:', process.env.ADB_PATH)
-    return process.env.ADB_PATH
+    return {
+      adbPath: process.env.ADB_PATH,
+      bundledExists: false,
+      usingBundled: false,
+      usingSystemAdb: false
+    }
   }
 
   const adbExe = process.platform === 'win32' ? 'adb.exe' : 'adb'
@@ -19,22 +32,59 @@ function findAdb(): string {
 
   if (!is.dev && process.resourcesPath) {
     const bundled = join(process.resourcesPath, 'platform-tools', adbExe)
-    console.log('[ADB] Checking bundled path:', bundled, 'exists:', existsSync(bundled))
-    if (existsSync(bundled)) return bundled
+    const bundledExists = existsSync(bundled)
+    console.log('[ADB] Checking bundled path:', bundled, 'exists:', bundledExists)
+    if (bundledExists) {
+      return {
+        adbPath: bundled,
+        bundledPath: bundled,
+        bundledExists,
+        usingBundled: true,
+        usingSystemAdb: false
+      }
+    }
+
+    log(
+      'error',
+      `[ADB] packaged app is missing bundled ${adbExe} at ${bundled}; falling back to system adb`
+    )
+    return {
+      adbPath: 'adb',
+      bundledPath: bundled,
+      bundledExists,
+      usingBundled: false,
+      usingSystemAdb: true
+    }
   }
 
   if (is.dev) {
     const devBundled = join(__dirname, '../../../resources/platform-tools', adbExe)
-    console.log('[ADB] Checking dev bundled path:', devBundled, 'exists:', existsSync(devBundled))
-    if (existsSync(devBundled)) return devBundled
+    const bundledExists = existsSync(devBundled)
+    console.log('[ADB] Checking dev bundled path:', devBundled, 'exists:', bundledExists)
+    if (bundledExists) {
+      return {
+        adbPath: devBundled,
+        bundledPath: devBundled,
+        bundledExists,
+        usingBundled: true,
+        usingSystemAdb: false
+      }
+    }
   }
 
   console.log('[ADB] Falling back to system adb')
-  return 'adb'
+  return {
+    adbPath: 'adb',
+    bundledExists: false,
+    usingBundled: false,
+    usingSystemAdb: true
+  }
 }
 
 export class AdbService {
   private adbPath: string
+  private adbResolution: AdbResolution
+  private adbVersion: string | undefined
   /** Track last successful push per serial for health monitoring. */
   private lastPushSuccess = new Map<string, number>()
   /** Cache which WiFi serials have been hardened this session. */
@@ -43,7 +93,8 @@ export class AdbService {
   private masterLocationForcedOff = new Set<string>()
 
   constructor() {
-    this.adbPath = findAdb()
+    this.adbResolution = resolveAdb()
+    this.adbPath = this.adbResolution.adbPath
     log('info', `[AdbService] using adb: ${this.adbPath}`)
     // Health-check: run `adb version` immediately so any spawn/path errors surface in logs
     this.healthCheck()
@@ -52,7 +103,10 @@ export class AdbService {
   private healthCheck(): void {
     const opts = this.execOpts()
     execFileAsync(this.adbPath, ['version'], opts)
-      .then(({ stdout }) => log('info', `[AdbService] health-check OK — ${stdout.split('\n')[0].trim()}`))
+      .then(({ stdout }) => {
+        this.adbVersion = stdout.split('\n')[0].trim()
+        log('info', `[AdbService] health-check OK — ${this.adbVersion}`)
+      })
       .catch((err: any) => log('error', `[AdbService] health-check FAILED (code=${err.code ?? 'none'} signal=${err.signal ?? 'none'}): ${err.message}`))
   }
 
@@ -60,6 +114,17 @@ export class AdbService {
   private execOpts(timeoutMs = 5000): { timeout: number; cwd?: string } {
     const cwd = this.adbPath !== 'adb' ? dirname(this.adbPath) : undefined
     return { timeout: timeoutMs, ...(cwd ? { cwd } : {}) }
+  }
+
+  getDiagnostics(): AdbDiagnostics {
+    return {
+      adbPath: this.adbPath,
+      adbVersion: this.adbVersion,
+      bundledPath: this.adbResolution.bundledPath,
+      bundledExists: this.adbResolution.bundledExists,
+      usingBundled: this.adbResolution.usingBundled,
+      usingSystemAdb: this.adbResolution.usingSystemAdb
+    }
   }
 
   /**
@@ -350,16 +415,28 @@ export class AdbService {
 
   // ─── Wi-Fi ADB ────────────────────────────────────────────────────────────
 
-  async connectWifi(ip: string, port = 5555): Promise<boolean> {
+  async connectWifi(ip: string, port = 5555): Promise<AdbConnectResult> {
     log('info', `[ADB] connect ${ip}:${port}`)
     try {
-      const { stdout } = await execFileAsync(this.adbPath, ['connect', `${ip}:${port}`], this.execOpts(10000))
+      const { stdout, stderr } = await execFileAsync(this.adbPath, ['connect', `${ip}:${port}`], this.execOpts(10000))
       const ok = stdout.includes('connected')
       log(ok ? 'ok' : 'warn', `[ADB] connect ${ip}:${port} → ${stdout.trim()}`)
-      return ok
+      return {
+        ...this.getDiagnostics(),
+        ok,
+        message: stdout.trim() || stderr.trim() || (ok ? 'Connected' : 'Connection failed'),
+        stdout,
+        stderr
+      }
     } catch (err: any) {
       log('error', `[ADB] connectWifi failed (code=${err.code ?? 'none'}): ${err.message}`)
-      return false
+      return {
+        ...this.getDiagnostics(),
+        ok: false,
+        message: err.message ?? 'Connection failed',
+        stdout: err.stdout,
+        stderr: err.stderr
+      }
     }
   }
 

@@ -17,6 +17,22 @@ export interface DeviceInfo {
   mockLocationActive: boolean
 }
 
+export interface AdbDiagnostics {
+  adbPath: string
+  adbVersion?: string
+  bundledPath?: string
+  bundledExists: boolean
+  usingBundled: boolean
+  usingSystemAdb: boolean
+}
+
+export interface AdbConnectResult extends AdbDiagnostics {
+  ok: boolean
+  message: string
+  stdout?: string
+  stderr?: string
+}
+
 export interface SavedLocation {
   id: number
   name: string

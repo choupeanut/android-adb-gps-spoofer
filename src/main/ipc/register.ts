@@ -60,6 +60,10 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
     return deviceManager.adbService.testConnection(serial)
   })
 
+  handle('get-adb-diagnostics', () => {
+    return deviceManager.adbService.getDiagnostics()
+  })
+
   // ─── Mock location setup ─────────────────────────────────────────────────
 
   handle('enable-mock-location', async (serial: string) => {
@@ -212,13 +216,13 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
   // ─── Wi-Fi ADB ────────────────────────────────────────────────────────────
 
   handle('connect-wifi', async (ip: string, port?: number) => {
-    const ok = await deviceManager.adbService.connectWifi(ip, port)
-    if (ok) {
+    const result = await deviceManager.adbService.connectWifi(ip, port)
+    if (result.ok) {
       // Force immediate poll + retry after 2s for devices that initially appear offline
       await deviceManager.forcePoll()
       setTimeout(() => deviceManager.forcePoll(), 2000)
     }
-    return ok
+    return result
   })
 
   handle('enable-tcpip', async (serial: string) => {

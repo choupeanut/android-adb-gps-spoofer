@@ -36,11 +36,35 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Download Windows ADB binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path resources/platform-tools | Out-Null
+          curl.exe -fsSL https://dl.google.com/android/repository/platform-tools-latest-windows.zip -o $env:TEMP\platform-tools.zip
+          Expand-Archive -Force $env:TEMP\platform-tools.zip -DestinationPath $env:TEMP\platform-tools
+          Copy-Item $env:TEMP\platform-tools\platform-tools\adb.exe resources/platform-tools\
+          Copy-Item $env:TEMP\platform-tools\platform-tools\AdbWinApi.dll resources/platform-tools\
+          Copy-Item $env:TEMP\platform-tools\platform-tools\AdbWinUsbApi.dll resources/platform-tools\
+          & resources/platform-tools/adb.exe version
+
       - name: Build & package (installer + portable)
         run: pnpm dist:win
         env:
           # Prevent signtool from auto-picking any machine certificate — we don't sign
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Verify packaged ADB
+        shell: pwsh
+        run: |
+          if (!(Test-Path "dist/win-unpacked/resources/platform-tools/adb.exe")) {
+            throw "Missing packaged adb.exe"
+          }
+          if (!(Test-Path "dist/win-unpacked/resources/platform-tools/AdbWinApi.dll")) {
+            throw "Missing packaged AdbWinApi.dll"
+          }
+          if (!(Test-Path "dist/win-unpacked/resources/platform-tools/AdbWinUsbApi.dll")) {
+            throw "Missing packaged AdbWinUsbApi.dll"
+          }
 
       - name: List dist artifacts
         shell: bash

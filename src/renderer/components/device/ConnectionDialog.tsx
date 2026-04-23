@@ -31,8 +31,9 @@ export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
     setLoading(true)
     setStatus('Connecting...')
     try {
-      const ok = await window.api.connectWifi(ip.trim(), parseInt(port) || 5555)
-      if (ok) {
+      const result = await window.api.connectWifi(ip.trim(), parseInt(port) || 5555)
+      const connected = typeof result === 'boolean' ? result : result.ok
+      if (connected) {
         setStatus('Connected! Waiting for device…')
         // Wait for the device to appear as 'connected' in the devices list
         const targetSerial = `${ip.trim()}:${parseInt(port) || 5555}`
@@ -53,7 +54,14 @@ export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
           setTimeout(() => { onConnected(); onClose() }, 2000)
         }
       } else {
-        setStatus('Connection failed. Check IP and that adb tcpip was run.')
+        if (typeof result === 'boolean') {
+          setStatus('Connection failed. Check IP and that adb tcpip was run.')
+        } else {
+          const adbHint = result.usingSystemAdb
+            ? ` Using system adb: ${result.adbPath}.`
+            : ` Using bundled adb: ${result.adbPath}.`
+          setStatus(`${result.message || 'Connection failed. Check IP and that adb tcpip was run.'}${adbHint}`)
+        }
       }
     } catch {
       setStatus('Error connecting.')

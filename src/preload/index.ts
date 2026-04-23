@@ -11,6 +11,7 @@ const api = {
   getDevices: () => ipcRenderer.invoke('get-devices'),
   setActiveDevice: (serial: string) => ipcRenderer.invoke('set-active-device', serial),
   testAdb: (serial: string) => ipcRenderer.invoke('test-adb', serial),
+  getAdbDiagnostics: () => ipcRenderer.invoke('get-adb-diagnostics'),
   enableMockLocation: (serial: string) => ipcRenderer.invoke('enable-mock-location', serial),
   getRealLocation: (serial: string) => ipcRenderer.invoke('get-real-location', serial),
   getAllRealLocations: () => ipcRenderer.invoke('get-all-real-locations'),
