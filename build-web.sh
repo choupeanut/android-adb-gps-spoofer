@@ -1,10 +1,12 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "=== Building Web Version ==="
 
-# Load deployment config
-if [ -f .env.deploy ]; then
+# Load deployment config (optional; local-first)
+if [ -f .env.deploy.local ]; then
+  source .env.deploy.local
+elif [ -f .env.deploy ]; then
   source .env.deploy
 fi
 

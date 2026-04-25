@@ -4,10 +4,16 @@
 
 ### 1. Configure Portainer Settings
 
-Edit `.env.deploy` and set your Portainer details:
+Copy `.env.deploy.example` to `.env.deploy.local` and set your Portainer details:
 
 ```bash
-PORTAINER_TOKEN=ptr_K6Vjmz1g7T60EJBa8xBx0IzD5MUZPlBWDw54eH8Q+lA=
+cp .env.deploy.example .env.deploy.local
+```
+
+Then edit `.env.deploy.local`:
+
+```bash
+PORTAINER_TOKEN=ptr_your_token_here
 PORTAINER_URL=https://your-portainer-url.com
 PORTAINER_ENDPOINT_ID=1
 STACK_NAME=android-adb-gps-spoofer
@@ -110,7 +116,8 @@ docker restart android-adb-gps-spoofer
 
 ## Security Notes
 
-- `.env.deploy` contains sensitive tokens and is git-ignored
+- Use `.env.deploy.local` for sensitive tokens
+- `.env.deploy*` is git-ignored except `.env.deploy.example`
 - Never commit tokens to version control
 - Use environment variables for production secrets
 - Restrict network access to port 3000 if needed

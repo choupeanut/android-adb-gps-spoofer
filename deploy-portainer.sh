@@ -1,25 +1,27 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "=== Deploying to Portainer ==="
 
-# Load deployment config
-if [ ! -f .env.deploy ]; then
-  echo "Error: .env.deploy not found"
-  echo "Please create .env.deploy with PORTAINER_TOKEN and PORTAINER_URL"
+# Load deployment config (local-first to avoid committing secrets)
+if [ -f .env.deploy.local ]; then
+  source .env.deploy.local
+elif [ -f .env.deploy ]; then
+  source .env.deploy
+else
+  echo "Error: no deployment env file found"
+  echo "Create .env.deploy.local (preferred) or .env.deploy from .env.deploy.example"
   exit 1
 fi
 
-source .env.deploy
-
 # Validate required variables
 if [ -z "$PORTAINER_TOKEN" ]; then
-  echo "Error: PORTAINER_TOKEN not set in .env.deploy"
+  echo "Error: PORTAINER_TOKEN not set in deployment env file"
   exit 1
 fi
 
 if [ -z "$PORTAINER_URL" ]; then
-  echo "Error: PORTAINER_URL not set in .env.deploy (e.g., https://portainer.yourdomain.com)"
+  echo "Error: PORTAINER_URL not set (e.g., https://portainer.yourdomain.com)"
   exit 1
 fi
 
@@ -28,17 +30,8 @@ STACK_NAME="${STACK_NAME:-android-adb-gps-spoofer}"
 IMAGE_NAME="android-adb-gps-spoofer"
 IMAGE_TAG="${1:-latest}"
 
-# Check if stack exists
-echo "Checking if stack '${STACK_NAME}' exists..."
-STACK_ID=$(curl -s -H "X-API-Key: ${PORTAINER_TOKEN}" \
-  "${PORTAINER_URL}/api/stacks" | \
-  jq -r ".[] | select(.Name == \"${STACK_NAME}\") | .Id" || echo "")
-
-if [ -z "$STACK_ID" ]; then
-  echo "Stack not found. Creating new stack..."
-  
-  # Create docker-compose.yml for the stack
-  cat > /tmp/docker-compose-deploy.yml <<EOF
+# Always generate compose content first (used by both create and update paths)
+cat > /tmp/docker-compose-deploy.yml <<EOF
 version: '3.8'
 
 services:
@@ -60,6 +53,15 @@ services:
 volumes:
   gps-spoofer-data:
 EOF
+
+# Check if stack exists
+echo "Checking if stack '${STACK_NAME}' exists..."
+STACK_ID=$(curl -s -H "X-API-Key: ${PORTAINER_TOKEN}" \
+  "${PORTAINER_URL}/api/stacks" | \
+  jq -r ".[] | select(.Name == \"${STACK_NAME}\") | .Id" || echo "")
+
+if [ -z "$STACK_ID" ]; then
+  echo "Stack not found. Creating new stack..."
 
   # Create stack via Portainer API
   curl -X POST \

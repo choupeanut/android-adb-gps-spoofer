@@ -8,62 +8,77 @@
 
 ### Overview
 
-An open-source GPS location spoofing tool for Android devices, operated entirely through ADB (Android Debug Bridge). No companion app installation is required on the phone. Available as an Electron desktop application (Windows / Linux) and a standalone web server (Docker).
+Open-source Android GPS spoofing via ADB (no phone-side app required).
 
-Designed and tested for compatibility with **Pikmin Bloom** and **Pokemon GO**.
+It has two runtime modes:
+- Electron desktop app (Windows / Linux)
+- Standalone web server (Docker, browser UI)
 
-### Key Features
+Designed and tested for **Pikmin Bloom** and **Pokemon GO** workflows.
+
+### What Is Implemented
 
 **Location Control**
-- Teleport -- click the map or enter coordinates to jump to any location (distances ≤ 1 km glide smoothly at walk speed, > 1 km teleport instantly)
-- Joystick -- walk, cycle, or drive with a virtual joystick or WASD / arrow keys
-- Route Mode -- draw multi-waypoint routes on the map or import GPX files, then auto-walk them
-- Wander Mode -- randomised movement within a configurable radius while routes are paused
+- Teleport by map click or manual coordinates
+- Short-distance teleport glide (up to 1 km) at walk speed when current spoof position is known
+- Joystick control (virtual joystick, `W/A/S/D`, arrow keys)
+- Route playback with multi-waypoint paths
+- GPX import (downsampled to max 1000 points)
+- End-of-route mode: `Stop`, `Loop`, or `Wander` (configurable radius)
+- Optional `Return to GPS when done`
 
-**Anti-Detection**
-- Gaussian GPS jitter (~10 m random noise on every coordinate update)
-- Speed fluctuation (+/-15% random variation on movement speed)
-- Bearing smoothing (gradual direction changes, no instant snaps)
-- Cooldown timer with distance-based wait time calculator (based on Pokemon GO cooldown table)
+**Anti-Detection / Stability**
+- Gaussian GPS jitter (~10 m scale)
+- Speed fluctuation (+/-15%)
+- Bearing smoothing for route turns
+- Cooldown calculator using distance table
+- Dual-channel keep-alive and push watchdog to reduce jump-back
 
-**Device Management**
-- Multi-device support -- spoof GPS on multiple Android devices simultaneously
-- USB and Wi-Fi ADB connections
-- Automatic device discovery (polls `adb devices` every 3 seconds)
-- Real GPS location readback from connected devices
+**Device & Session**
+- Multi-device spoofing (parallel dispatch per selected serial)
+- USB + Wi-Fi ADB workflows (`adb tcpip`, `adb connect`)
+- Auto device polling every 3 seconds
+- Real GPS readback (network-provider-first parsing)
+- Saved locations + history (last 100 entries)
+- Session persistence for route/speed/toggles
+- Global `Stop All` with 3 modes:
+  - `stay`: stop movement, keep mock GPS pinned
+  - `graceful`: walk back to real GPS, then stop
+  - `immediate`: remove mock provider immediately
 
-**Convenience**
-- Saved locations -- star favourite spots for quick recall
-- Location history -- last 100 visited coordinates
-- Speed presets -- Walk (1.4 m/s), Cycle (5.14 m/s), Drive (11 m/s), HSR (83.3 m/s), Plane (250 m/s), Custom
-- GPX file import for pre-planned routes
-- Return-to-real-GPS function that walks back at route speed before stopping
-
-**Dual Architecture**
-- Electron desktop app with native system tray
-- Standalone web server accessible from any browser on the LAN (Docker deployment)
+**Architecture**
+- Desktop app with tray support
+- Embedded LAN web access from desktop app (default `http://<host-ip>:3388`)
+- Standalone web server in Docker (default `http://<host-ip>:3000`)
 
 ### Requirements
 
 **Desktop (Electron)**
-- Windows 10/11 or Linux (x64)
-- ADB (Android Debug Bridge) -- either installed system-wide via PATH or placed in `resources/platform-tools/`
+- Windows 10/11 or Linux x64
+- ADB either:
+  - installed system-wide in `PATH`, or
+  - bundled for runtime
+
+**ADB resource folders (for packaged builds)**
+- Windows bundle source: `resources/platform-tools/` (`adb.exe`, `AdbWinApi.dll`, `AdbWinUsbApi.dll`)
+- Linux packaged app defaults to system `adb` in `PATH` (no bundled Linux adb by default)
 
 **Web Server (Docker)**
 - Docker
-- USB passthrough (`--privileged` flag or `/dev/bus/usb` volume mount)
+- USB passthrough: `--privileged` plus `/dev/bus/usb` mount
+- Persistent data volume recommended (`/data`)
 
 **Android Device**
-- Android 12 or newer (required for `cmd location` mock provider commands)
-- USB Debugging enabled in Developer Options
+- Android 12+ recommended (`cmd location` test-provider flow)
+- USB debugging enabled
 
 ### Installation
 
 #### Desktop
 
-Download the latest release from the [Releases](https://github.com/choupeanut/android-adb-gps-spoofer/releases) page:
-- **Windows**: `.exe` NSIS installer
-- **Linux**: `.AppImage`
+Download release artifacts:
+- Windows: `.exe` installer / portable
+- Linux: `.AppImage`
 
 Or build from source:
 
@@ -71,137 +86,96 @@ Or build from source:
 git clone https://github.com/choupeanut/android-adb-gps-spoofer.git
 cd android-adb-gps-spoofer
 pnpm install
-pnpm dev          # Development mode with hot reload
-pnpm dist:win     # Build Windows installer
-pnpm dist:linux   # Build Linux AppImage
+pnpm dev
+pnpm dist:win
+pnpm dist:linux
 ```
 
-#### Docker (Web Server)
+#### Docker (Standalone Web)
 
 ```bash
 docker pull choupeanut/android-adb-gps-spoofer:latest
 
 docker run -d \
+  --name android-adb-gps-spoofer \
   -p 3000:3000 \
   --privileged \
   -v /dev/bus/usb:/dev/bus/usb \
+  -v gps-spoofer-data:/data \
   choupeanut/android-adb-gps-spoofer:latest
 ```
 
-Then open `http://<host-ip>:3000` in your browser.
+Open `http://<host-ip>:3000`.
 
-Or build the Docker image locally:
+### Quick Start (USB)
 
-```bash
-git clone https://github.com/choupeanut/android-adb-gps-spoofer.git
-cd android-adb-gps-spoofer
-docker build -t android-adb-gps-spoofer .
-docker run -d -p 3000:3000 --privileged -v /dev/bus/usb:/dev/bus/usb android-adb-gps-spoofer
-```
+1. Enable Android developer options + USB debugging.
+2. Connect device by USB and accept RSA prompt.
+3. In app/device card, run `Setup GPS` (`enable-mock-location`).
+4. Start spoofing:
+   - Teleport
+   - Joystick
+   - Route play / GPX import
+5. Stop via per-feature stop, or `Stop All` modal.
 
-### Usage: USB ADB Connection
+### Wi-Fi ADB Flow
 
-1. **Enable Developer Options on Android**
-   - Go to Settings > About Phone
-   - Tap "Build Number" 7 times until you see "You are now a developer"
-   - Return to Settings > Developer Options
-   - Enable "USB Debugging"
+1. USB once: `Enable TCP/IP` (runs `adb tcpip 5555`).
+2. Enter phone LAN IP and connect.
+3. Reconnect by `ip:port` while phone stays on same LAN.
+4. After reboot, usually repeat TCP/IP enable over USB.
 
-2. **Connect via USB**
-   - Plug your Android device into your computer with a USB cable
-   - On the phone, accept the "Allow USB Debugging?" prompt (check "Always allow from this computer")
-   - Open Android ADB GPS Spoofer -- your device will appear in the device panel
+### Synology / Container Manager Notes
 
-3. **Set up mock location**
-   - Click "Setup GPS" on the device card -- this enables the mock location test provider
-   - The device status indicator will turn green when ready
-
-4. **Start spoofing**
-   - **Teleport**: Click a point on the map, then click the "Teleport" button
-   - **Joystick**: Switch to the Joystick tab, use the on-screen joystick or WASD / arrow keys
-   - **Route**: Switch to the Route tab, click waypoints on the map (or import a GPX file), set speed, then press Play
-
-### Usage: Wi-Fi ADB Connection
-
-Wi-Fi ADB allows wireless operation after an initial USB pairing. This is useful when you want your phone to remain mobile during spoofing.
-
-1. **Initial setup (USB required once)**
-   - Connect your phone via USB and ensure USB Debugging is working
-   - In the app, click "Wi-Fi" in the connection dialog
-   - Click "Enable TCP/IP" -- this runs `adb tcpip 5555` to switch the phone to network mode
-
-2. **Connect wirelessly**
-   - Note your phone's IP address (Settings > Wi-Fi > your network > IP address)
-   - Enter the IP address in the connection dialog and click Connect
-   - You can now disconnect the USB cable
-
-3. **Reconnect**
-   - As long as the phone stays on the same Wi-Fi network with TCP/IP enabled, you can reconnect by IP
-   - If the phone reboots, you need to repeat the USB TCP/IP enable step
-
-**Note**: Wi-Fi ADB requires the phone and computer to be on the same local network.
-
-### Compatibility with Pikmin Bloom and Pokemon GO
-
-This tool uses Android's built-in Mock Location test provider API through ADB shell commands:
-
-```
-adb shell cmd location providers set-test-provider-location gps --location <lat>,<lng> ...
-```
-
-No root access, no modified APK, and no app installation on the phone is needed. The anti-detection system (jitter, speed fluctuation, bearing smoothing) is designed to mimic realistic GPS behaviour.
-
-**Cooldown Table (Pokemon GO)**
-
-| Distance | Wait Time |
-|----------|-----------|
-| 1 km     | 30 sec    |
-| 2 km     | 1 min     |
-| 5 km     | 2 min     |
-| 10 km    | 5 min     |
-| 25 km    | 10 min    |
-| 50 km    | 20 min    |
-| 100 km   | 30 min    |
-| 250 km   | 45 min    |
-| 500 km   | 60 min    |
-| 750 km   | 80 min    |
-| 1000 km  | 100 min   |
-| 1500 km  | 120 min   |
-
-The app displays a cooldown warning when teleporting distances of 500 m or more.
-
-**Disclaimer**: GPS spoofing may violate the Terms of Service of Pikmin Bloom, Pokemon GO, and other location-based games. Use at your own risk.
+- Run with USB passthrough and privileged mode, otherwise ADB-over-USB in container usually fails.
+- Persist `/data` to a Synology volume.
+- Prefer LAN-only exposure for port `3000`.
 
 ### Development
 
 ```bash
-pnpm install          # Install dependencies
-pnpm dev              # Electron dev mode (hot reload)
-pnpm build            # Build Electron app
-pnpm test             # Run unit tests (Vitest)
-pnpm test:watch       # Watch mode
+pnpm install
+pnpm dev
+pnpm build
+pnpm test
+pnpm test:watch
 
-# Web server build (for Docker)
-node build-server.cjs                          # Bundle server
-npx vite build --config vite.web.config.ts     # Bundle client
+# Build standalone web artifacts
+node build-server.cjs
+npx vite build --config vite.web.config.ts
+
+# Run standalone web server locally
+PORT=3000 DATA_DIR=./data node dist/server/index.js
 ```
+
+### Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ADB_PATH` | unset | Override adb binary path |
+| `PORT` | `3000` (standalone web) | HTTP/WS server port |
+| `DATA_DIR` | `./data` (standalone web) | SQLite/session/log storage directory |
+| `APP_VERSION` | `dev` | Version shown by `/api/version` |
+| `EXPERIMENTAL_DISABLE_REAL_GPS_ON_FAKE` | `0` | Experimental master-location toggle during spoof |
+| `ALLOW_CONTAMINATED_REAL_GPS` | `0` | Allow fallback GPS providers when strict network provider parse fails |
 
 ### Project Structure
 
-```
+```text
 src/
-  main/             Electron main process (Node.js)
-    services/       ADB, device manager, location engine, route engine, anti-detect, database
-    ipc/            IPC handler registrations
-    utils/          Coordinate math, cooldown calculations
-  preload/          contextBridge API surface
-  renderer/         React 19 + TypeScript UI
-    components/     Map, controls, device, sidebar, layout, UI primitives
-    stores/         Zustand state (device, location, route, UI, logs)
-  shared/           Types and constants shared across all processes
+  main/
+    services/       ADB, device manager, location engine, route engine, anti-detect, db
+    ipc/            IPC + WebSocket handler registration
+    server/         Embedded desktop LAN web server (HTTP + WS)
+  preload/          Electron contextBridge API
+  renderer/         React + TypeScript UI
+  shared/           Shared types/constants/geo helpers
 web/
-  server/           Express + WebSocket standalone server (Docker)
-  client/           Browser client (replaces Electron preload with HTTP/WS)
+  server/           Standalone Express + WebSocket server (Docker target)
+  client/           Browser client adapter (WS + REST)
+resources/
+  platform-tools/   Windows ADB binaries (optional bundle)
+  platform-tools-linux/ Optional notes for custom Linux adb bundling
 tests/
   unit/             Vitest unit tests
   integration/      WebSocket integration tests
@@ -210,9 +184,14 @@ tests/
 ### Tech Stack
 
 - Electron 33, React 19, TypeScript
+- Vite / electron-vite, esbuild
 - Tailwind CSS v3, Zustand, react-leaflet
-- better-sqlite3, Express, WebSocket (ws)
-- electron-vite (bundler), esbuild, Vite
+- better-sqlite3, Express (standalone web), ws
+
+### Compatibility & Disclaimer
+
+GPS spoofing can violate Terms of Service of location-based games and services.
+Use at your own risk.
 
 ### License
 
@@ -224,211 +203,122 @@ MIT
 
 ### 概述
 
-一款開源的 Android GPS 位置偽裝工具，完全透過 ADB（Android Debug Bridge）操作。手機端無需安裝任何應用程式。提供 Electron 桌面應用程式（Windows / Linux）以及獨立 Web 伺服器（Docker 部署）兩種使用方式。
+這是一個透過 ADB 進行 Android GPS 偽裝的開源工具，手機端不需安裝 App。
 
-針對 **Pikmin Bloom** 和 **Pokemon GO** 設計並測試相容性。
+目前有兩種執行模式：
+- Electron 桌面版（Windows / Linux）
+- 獨立 Web 伺服器（Docker + 瀏覽器）
 
-### 主要功能
+### 目前實作功能
 
 **位置控制**
-- 瞬間移動 -- 點擊地圖或輸入座標跳轉至任何地點（距離 ≤ 1 公里時以步行速度平滑移動，> 1 公里瞬間傳送）
-- 搖桿模式 -- 使用虛擬搖桿或 WASD / 方向鍵，以步行、騎車或開車速度移動
-- 路線模式 -- 在地圖上繪製多點路線或匯入 GPX 檔案，自動沿路線行走
-- 漫遊模式 -- 路線暫停時，在可設定的半徑內隨機移動
+- 地圖點選或座標輸入瞬移
+- 已有偽裝位置時，1 公里內可平滑走位瞬移
+- 搖桿模式（虛擬搖桿、`W/A/S/D`、方向鍵）
+- 多點路線自動行走
+- GPX 匯入（超過 1000 點會自動降採樣）
+- 路線結束策略：`Stop`、`Loop`、`Wander`
+- 可選「路線結束後自動返回真實 GPS」
 
-**反偵測機制**
-- 高斯 GPS 抖動（每次座標更新加入約 10 公尺隨機噪音）
-- 速度波動（移動速度 +/-15% 隨機變化）
-- 方向平滑化（漸進式方向變更，避免瞬間轉向）
-- 冷卻計時器，內建基於距離的等待時間計算（依據 Pokemon GO 冷卻時間表）
+**反偵測與穩定性**
+- 高斯抖動（約 10m 級別）
+- 速度波動（+/-15%）
+- 方向平滑化
+- 冷卻時間計算
+- 雙通道 keep-alive + watchdog，降低跳回真實 GPS 機率
 
-**裝置管理**
-- 多裝置支援 -- 同時在多台 Android 裝置上進行 GPS 偽裝
-- USB 與 Wi-Fi ADB 連線
-- 自動裝置偵測（每 3 秒輪詢 `adb devices`）
-- 從已連線裝置讀取真實 GPS 位置
+**裝置與狀態管理**
+- 多裝置同時偽裝
+- USB / Wi-Fi ADB
+- 每 3 秒自動輪詢裝置
+- 真實 GPS 回讀（以 network provider 優先）
+- 收藏地點 + 最近 100 筆歷史
+- Session 設定持久化
+- `Stop All` 三種模式：
+  - `stay`：停止移動但維持 mock GPS
+  - `graceful`：走回真實 GPS 再停止
+  - `immediate`：立即移除 mock provider
 
-**便利功能**
-- 收藏地點 -- 將常用地點加入收藏，快速切換
-- 位置歷史 -- 記錄最近 100 筆造訪座標
-- 速度預設 -- 步行 (1.4 m/s)、騎車 (5.14 m/s)、開車 (11 m/s)、高鐵 (83.3 m/s)、飛機 (250 m/s)、自訂
-- GPX 檔案匯入，適用於預先規劃的路線
-- 返回真實 GPS 功能，以路線速度走回原位後停止偽裝
-
-**雙架構**
-- Electron 桌面應用，支援系統匣
-- 獨立 Web 伺服器，區域網路內任何瀏覽器皆可存取（Docker 部署）
+**架構**
+- 桌面版含系統匣
+- 桌面版內建 LAN Web 入口（預設 `3388`）
+- Docker 獨立 Web（預設 `3000`）
 
 ### 系統需求
 
-**桌面版（Electron）**
-- Windows 10/11 或 Linux（x64）
-- ADB（Android Debug Bridge）-- 系統 PATH 中已安裝，或放置於 `resources/platform-tools/`
+**桌面版**
+- Windows 10/11 或 Linux x64
+- ADB 可用系統 PATH，或用資源檔打包
 
-**Web 伺服器（Docker）**
-- Docker
-- USB 通透（`--privileged` 旗標或 `/dev/bus/usb` 磁碟區掛載）
+**打包 ADB 資源目錄**
+- Windows：`resources/platform-tools/`
+- Linux：預設走系統 `PATH` 的 `adb`（目前不預設打包 Linux adb）
 
-**Android 裝置**
-- Android 12 以上（`cmd location` 模擬位置指令所需）
-- 已啟用 USB 偵錯
+**Docker Web**
+- 需要 `--privileged` + `/dev/bus/usb` 掛載
+- 建議掛載 `/data` 做持久化
+
+**Android**
+- 建議 Android 12+
+- 開啟 USB 偵錯
 
 ### 安裝
 
 #### 桌面版
 
-從 [Releases](https://github.com/choupeanut/android-adb-gps-spoofer/releases) 頁面下載最新版本：
-- **Windows**：`.exe` NSIS 安裝程式
-- **Linux**：`.AppImage`
-
-或從原始碼建置：
-
 ```bash
 git clone https://github.com/choupeanut/android-adb-gps-spoofer.git
 cd android-adb-gps-spoofer
 pnpm install
-pnpm dev          # 開發模式，支援熱重載
-pnpm dist:win     # 建置 Windows 安裝程式
-pnpm dist:linux   # 建置 Linux AppImage
+pnpm dev
+pnpm dist:win
+pnpm dist:linux
 ```
 
-#### Docker（Web 伺服器）
+#### Docker（獨立 Web）
 
 ```bash
-docker pull choupeanut/android-adb-gps-spoofer:latest
-
 docker run -d \
+  --name android-adb-gps-spoofer \
   -p 3000:3000 \
   --privileged \
   -v /dev/bus/usb:/dev/bus/usb \
+  -v gps-spoofer-data:/data \
   choupeanut/android-adb-gps-spoofer:latest
 ```
 
-開啟瀏覽器前往 `http://<主機 IP>:3000` 即可使用。
+### 使用流程（USB）
 
-或在本地建置 Docker 映像：
+1. 啟用開發者模式與 USB 偵錯
+2. USB 連線並在手機上允許偵錯
+3. 在裝置卡片按 `Setup GPS`
+4. 使用 Teleport / Joystick / Route / GPX
+5. 需要停止時可用單一功能停止或 `Stop All`
 
-```bash
-git clone https://github.com/choupeanut/android-adb-gps-spoofer.git
-cd android-adb-gps-spoofer
-docker build -t android-adb-gps-spoofer .
-docker run -d -p 3000:3000 --privileged -v /dev/bus/usb:/dev/bus/usb android-adb-gps-spoofer
-```
+### Wi-Fi ADB 流程
 
-### 使用方式：USB ADB 連線
+1. 先 USB 一次，點 `Enable TCP/IP`
+2. 輸入手機 LAN IP 連線
+3. 同網段可重連；重開機通常要重新做 TCP/IP 啟用
 
-1. **啟用 Android 開發者選項**
-   - 前往 設定 > 關於手機
-   - 連續點擊「版本號碼」7 次，直到出現「您現在是開發人員」
-   - 返回 設定 > 開發人員選項
-   - 啟用「USB 偵錯」
+### Synology / Container Manager 注意事項
 
-2. **透過 USB 連接**
-   - 使用 USB 傳輸線將 Android 裝置連接到電腦
-   - 手機上會彈出「允許 USB 偵錯嗎？」提示，點選允許（勾選「一律允許從此電腦」）
-   - 開啟 Android ADB GPS Spoofer，裝置將自動顯示在裝置面板中
-
-3. **設定模擬位置**
-   - 點擊裝置卡片上的「Setup GPS」，啟用模擬位置測試提供者
-   - 裝置狀態指示燈變為綠色即表示就緒
-
-4. **開始偽裝**
-   - **瞬間移動**：在地圖上點擊一個位置，然後按下「Teleport」按鈕
-   - **搖桿模式**：切換至 Joystick 分頁，使用螢幕搖桿或 WASD / 方向鍵
-   - **路線模式**：切換至 Route 分頁，在地圖上點擊路徑點（或匯入 GPX 檔案），設定速度後按 Play
-
-### 使用方式：Wi-Fi ADB 連線
-
-Wi-Fi ADB 可在初次 USB 配對後進行無線操作。適用於偽裝期間需要手機保持可移動狀態的場景。
-
-1. **初始設定（需 USB 一次）**
-   - 透過 USB 連接手機，確認 USB 偵錯已正常運作
-   - 在應用程式中，點擊連線對話框中的「Wi-Fi」
-   - 點擊「Enable TCP/IP」，此操作會執行 `adb tcpip 5555` 將手機切換為網路模式
-
-2. **無線連接**
-   - 記下手機的 IP 位址（設定 > Wi-Fi > 目前網路 > IP 位址）
-   - 在連線對話框中輸入 IP 位址，點擊 Connect
-   - 此時可以拔除 USB 傳輸線
-
-3. **重新連線**
-   - 只要手機維持在同一 Wi-Fi 網路且 TCP/IP 模式未關閉，即可透過 IP 重新連線
-   - 若手機重新開機，需再次透過 USB 執行 TCP/IP 啟用步驟
-
-**注意**：Wi-Fi ADB 需要手機與電腦在同一區域網路內。
-
-### Pikmin Bloom 和 Pokemon GO 相容性
-
-本工具透過 ADB shell 指令使用 Android 內建的 Mock Location 測試提供者 API：
-
-```
-adb shell cmd location providers set-test-provider-location gps --location <lat>,<lng> ...
-```
-
-無需 root 權限、無需修改 APK、手機端無需安裝任何應用程式。反偵測系統（抖動、速度波動、方向平滑化）的設計旨在模擬真實的 GPS 行為。
-
-**冷卻時間表（Pokemon GO）**
-
-| 距離 | 等待時間 |
-|------|----------|
-| 1 km     | 30 秒  |
-| 2 km     | 1 分鐘 |
-| 5 km     | 2 分鐘 |
-| 10 km    | 5 分鐘 |
-| 25 km    | 10 分鐘 |
-| 50 km    | 20 分鐘 |
-| 100 km   | 30 分鐘 |
-| 250 km   | 45 分鐘 |
-| 500 km   | 60 分鐘 |
-| 750 km   | 80 分鐘 |
-| 1000 km  | 100 分鐘 |
-| 1500 km  | 120 分鐘 |
-
-當瞬移距離達 500 公尺以上時，應用程式會顯示冷卻時間警告。
-
-**免責聲明**：GPS 偽裝可能違反 Pikmin Bloom、Pokemon GO 及其他位置型遊戲的服務條款。使用風險自負。
+- 容器需開 `privileged` 並掛載 USB bus，否則多半無法操作 USB ADB。
+- `/data` 請掛到 NAS Volume 做資料保留。
+- 建議僅在內網開放 `3000`。
 
 ### 開發
 
 ```bash
-pnpm install          # 安裝依賴
-pnpm dev              # Electron 開發模式（熱重載）
-pnpm build            # 建置 Electron 應用
-pnpm test             # 執行單元測試（Vitest）
-pnpm test:watch       # 監聽模式
+pnpm install
+pnpm dev
+pnpm build
+pnpm test
 
-# Web 伺服器建置（Docker 用）
-node build-server.cjs                          # 打包伺服器
-npx vite build --config vite.web.config.ts     # 打包客戶端
+node build-server.cjs
+npx vite build --config vite.web.config.ts
+PORT=3000 DATA_DIR=./data node dist/server/index.js
 ```
-
-### 專案結構
-
-```
-src/
-  main/             Electron 主程序（Node.js）
-    services/       ADB、裝置管理、位置引擎、路線引擎、反偵測、資料庫
-    ipc/            IPC 處理器註冊
-    utils/          座標運算、冷卻計算
-  preload/          contextBridge API 介面
-  renderer/         React 19 + TypeScript 使用者介面
-    components/     地圖、控制項、裝置、側邊欄、佈局、UI 元件
-    stores/         Zustand 狀態管理（裝置、位置、路線、UI、日誌）
-  shared/           所有程序共用的型別與常數
-web/
-  server/           Express + WebSocket 獨立伺服器（Docker）
-  client/           瀏覽器客戶端（以 HTTP/WS 取代 Electron preload）
-tests/
-  unit/             Vitest 單元測試
-  integration/      WebSocket 整合測試
-```
-
-### 技術棧
-
-- Electron 33、React 19、TypeScript
-- Tailwind CSS v3、Zustand、react-leaflet
-- better-sqlite3、Express、WebSocket (ws)
-- electron-vite（打包工具）、esbuild、Vite
 
 ### 授權
 

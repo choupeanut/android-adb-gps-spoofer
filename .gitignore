@@ -28,6 +28,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+!.env.deploy.example
 
 # Database files (generated at runtime)
 *.sqlite
@@ -51,4 +52,5 @@ docker-build.log
 # ADB binaries (users download separately)
 resources/platform-tools/*.exe
 resources/platform-tools/*.dll
-resources/platform-tools-linux/
+resources/platform-tools-linux/*
+!resources/platform-tools-linux/README.txt

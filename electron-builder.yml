@@ -31,11 +31,6 @@ win:
   icon: resources/icon.ico
 
 linux:
-  extraResources:
-    - from: resources/platform-tools-linux/
-      to: platform-tools
-      filter:
-        - adb
   target:
     - target: AppImage
       arch:
