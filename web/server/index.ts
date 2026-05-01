@@ -15,8 +15,9 @@ import { log, getLogs } from './logger'
 import { DeviceManager } from './services/device-manager'
 import { DeviceEngineManager } from './services/device-engine-manager'
 import { Database } from './services/db'
+import { RoutePlannerService } from './services/route-planner'
 
-import type { RouteWaypoint } from '@shared/types'
+import type { RoutePlanRoadRequest, RouteWaypoint } from '@shared/types'
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10)
 const DATA_DIR = process.env.DATA_DIR ?? join(process.cwd(), 'data')
@@ -26,6 +27,7 @@ mkdirSync(DATA_DIR, { recursive: true })
 const deviceManager = new DeviceManager()
 const engineManager = new DeviceEngineManager(deviceManager.adbService)
 const db = new Database()
+const routePlanner = new RoutePlannerService()
 
 deviceManager.onDevicesChanged((connectedSerials) => {
   engineManager.pruneDisconnected(connectedSerials)
@@ -206,6 +208,10 @@ handle('route-set-waypoints', (waypoints: RouteWaypoint[], serials?: string[]) =
   return true
 })
 
+handle('route-plan-road-network', async (request: RoutePlanRoadRequest) => {
+  return routePlanner.planRoadNetwork(request)
+})
+
 handle('route-play', async (serials: string[], speedMs: number, fromLat?: number, fromLng?: number) => {
   await Promise.all(serials.map((serial) => {
     const { location, route } = engineManager.getEngines(serial)
@@ -285,6 +291,12 @@ handle('route-set-speed', (speedMs: number, serials?: string[]) => {
   return true
 })
 
+handle('route-set-fixed-speed', (enabled: boolean, serials?: string[]) => {
+  const targets = serials ?? engineManager.getActiveSerials()
+  for (const serial of targets) engineManager.peekEngines(serial)?.route.setFixedSpeed(enabled)
+  return true
+})
+
 // Saved locations
 handle('locations-get-saved', () => db.getSavedLocations())
 handle('locations-get-history', () => db.getHistory())
@@ -319,6 +331,7 @@ if (savedSession) {
       route.setWaypoints(savedSession.waypoints as any)
     }
     if (typeof savedSession.speedMs === 'number') route.setSpeed(savedSession.speedMs)
+    if (typeof savedSession.fixedSpeed === 'boolean') route.setFixedSpeed(savedSession.fixedSpeed)
     if (typeof savedSession.loop === 'boolean') route.setLoop(savedSession.loop)
     if (typeof savedSession.wanderEnabled === 'boolean') {
       route.setWanderEnabled(savedSession.wanderEnabled, (savedSession.wanderRadiusM as number) ?? 100)

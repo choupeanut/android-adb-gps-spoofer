@@ -47,6 +47,41 @@ export interface RouteWaypoint {
   altitude?: number
 }
 
+export type RouteMode = 'manual' | 'road-network'
+export type RouteProfile = 'walk' | 'cycle' | 'drive'
+export type RoutePlanStatus = 'idle' | 'planning' | 'success' | 'error'
+
+export interface RoutePlanRoadRequest {
+  controlPoints: RouteWaypoint[]
+  profile: RouteProfile
+  loop: boolean
+}
+
+export interface RoutePlanLegSummary {
+  fromIndex: number
+  toIndex: number
+  distanceKm: number
+  durationSec: number
+  connectorStartKm: number
+  connectorEndKm: number
+  snappedStart: {
+    lat: number
+    lng: number
+  }
+  snappedEnd: {
+    lat: number
+    lng: number
+  }
+}
+
+export interface RoutePlanRoadResponse {
+  plannedWaypoints: RouteWaypoint[]
+  totalDistanceKm: number
+  totalDurationSec: number
+  legSummaries: RoutePlanLegSummary[]
+  warnings: string[]
+}
+
 export type SpeedMode = 'walk' | 'cycle' | 'drive' | 'hsr' | 'plane' | 'custom'
 export type SpoofMode = 'idle' | 'teleport' | 'joystick' | 'route'
 

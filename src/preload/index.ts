@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { RouteWaypoint } from '../shared/types'
+import type { RoutePlanRoadRequest, RoutePlanRoadResponse, RouteWaypoint } from '../shared/types'
 
 export type GpsSpoofApi = typeof api
 
@@ -35,6 +35,8 @@ const api = {
   // Route
   routeSetWaypoints: (waypoints: RouteWaypoint[], serials?: string[]) =>
     ipcRenderer.invoke('route-set-waypoints', waypoints, serials),
+  routePlanRoadNetwork: (request: RoutePlanRoadRequest): Promise<RoutePlanRoadResponse> =>
+    ipcRenderer.invoke('route-plan-road-network', request),
   routePlay: (serials: string[], speedMs: number, fromLat?: number, fromLng?: number) =>
     ipcRenderer.invoke('route-play', serials, speedMs, fromLat, fromLng),
   routePause: () => ipcRenderer.invoke('route-pause'),
@@ -48,6 +50,8 @@ const api = {
     ipcRenderer.invoke('route-set-wander', enabled, radiusM),
   routeSetSpeed: (speedMs: number) =>
     ipcRenderer.invoke('route-set-speed', speedMs),
+  routeSetFixedSpeed: (enabled: boolean) =>
+    ipcRenderer.invoke('route-set-fixed-speed', enabled),
 
   // GPX
   importGpx: () => ipcRenderer.invoke('import-gpx'),

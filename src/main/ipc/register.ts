@@ -2,11 +2,12 @@ import { ipcMain, app } from 'electron'
 import { DeviceManager } from '../services/device-manager'
 import { DeviceEngineManager } from '../services/device-engine-manager'
 import { Database } from '../services/db'
+import { RoutePlannerService } from '../services/route-planner'
 import { registerGpxHandlers } from './gpx.ipc'
 import { registerHandler } from '../server/index'
 import { getLogs, getLogDir } from '../logger'
 import { log } from '../logger'
-import type { RouteWaypoint } from '@shared/types'
+import type { RoutePlanRoadRequest, RouteWaypoint } from '@shared/types'
 
 /**
  * Register a handler for both Electron IPC and WebSocket.
@@ -21,6 +22,7 @@ function handle(channel: string, handler: (...args: any[]) => any): void {
 
 export function registerIpcHandlers(deviceManager: DeviceManager): void {
   const engineManager = new DeviceEngineManager(deviceManager.adbService)
+  const routePlanner = new RoutePlannerService()
 
   let db: Database
   try {
@@ -245,6 +247,10 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
     return true
   })
 
+  handle('route-plan-road-network', async (request: RoutePlanRoadRequest) => {
+    return routePlanner.planRoadNetwork(request)
+  })
+
   handle('route-play', async (
     serials: string[],
     speedMs: number,
@@ -346,6 +352,15 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
     for (const serial of targets) {
       const pair = engineManager.peekEngines(serial)
       if (pair) pair.route.setSpeed(speedMs)
+    }
+    return true
+  })
+
+  handle('route-set-fixed-speed', (enabled: boolean, serials?: string[]) => {
+    const targets = serials ?? engineManager.getActiveSerials()
+    for (const serial of targets) {
+      const pair = engineManager.peekEngines(serial)
+      if (pair) pair.route.setFixedSpeed(enabled)
     }
     return true
   })

@@ -27,11 +27,24 @@ export default function App(): JSX.Element {
   const setPlaying = useRouteStore((s) => s.setPlaying)
   const setWandering = useRouteStore((s) => s.setWandering)
   const setSpeedMs = useRouteStore((s) => s.setSpeedMs)
+  const setFixedSpeed = useRouteStore((s) => s.setFixedSpeed)
   const setLoop = useRouteStore((s) => s.setLoop)
   const setWanderEnabled = useRouteStore((s) => s.setWanderEnabled)
   const setWanderRadiusM = useRouteStore((s) => s.setWanderRadiusM)
+  const setRouteMode = useRouteStore((s) => s.setRouteMode)
+  const setRouteProfile = useRouteStore((s) => s.setRouteProfile)
+  const setControlPoints = useRouteStore((s) => s.setControlPoints)
+  const setWaypoints = useRouteStore((s) => s.setWaypoints)
   const setReturnOnFinish = useRouteStore((s) => s.setReturnOnFinish)
   const setStartFromRealGps = useRouteStore((s) => s.setStartFromRealGps)
+  const routeMode = useRouteStore((s) => s.routeMode)
+  const routeProfile = useRouteStore((s) => s.routeProfile)
+  const controlPoints = useRouteStore((s) => s.controlPoints)
+  const speedMs = useRouteStore((s) => s.speedMs)
+  const fixedSpeed = useRouteStore((s) => s.fixedSpeed)
+  const loop = useRouteStore((s) => s.loop)
+  const wanderEnabled = useRouteStore((s) => s.wanderEnabled)
+  const wanderRadiusM = useRouteStore((s) => s.wanderRadiusM)
   const returnOnFinish = useRouteStore((s) => s.returnOnFinish)
   const startFromRealGps = useRouteStore((s) => s.startFromRealGps)
 
@@ -53,18 +66,61 @@ export default function App(): JSX.Element {
     ;(window.api.getSession() as Promise<any>).then((s: any) => {
       if (!s) return
       if (typeof s.speedMs === 'number') setSpeedMs(s.speedMs)
+      if (typeof s.fixedSpeed === 'boolean') setFixedSpeed(s.fixedSpeed)
       if (typeof s.loop === 'boolean') setLoop(s.loop)
       if (typeof s.wanderEnabled === 'boolean') setWanderEnabled(s.wanderEnabled)
       if (typeof s.wanderRadiusM === 'number') setWanderRadiusM(s.wanderRadiusM)
+      if (s.routeMode === 'manual' || s.routeMode === 'road-network') setRouteMode(s.routeMode)
+      if (s.routeProfile === 'walk' || s.routeProfile === 'cycle' || s.routeProfile === 'drive') {
+        setRouteProfile(s.routeProfile)
+      }
+      if (Array.isArray(s.controlPoints)) setControlPoints(s.controlPoints)
+      if (Array.isArray(s.waypoints) && s.routeMode === 'manual') setWaypoints(s.waypoints)
       if (typeof s.returnOnFinish === 'boolean') setReturnOnFinish(s.returnOnFinish)
       if (typeof s.startFromRealGps === 'boolean') setStartFromRealGps(s.startFromRealGps)
     }).catch(() => {})
-  }, [setSpeedMs, setLoop, setWanderEnabled, setWanderRadiusM, setReturnOnFinish, setStartFromRealGps])
+  }, [
+    setSpeedMs,
+    setFixedSpeed,
+    setLoop,
+    setWanderEnabled,
+    setWanderRadiusM,
+    setRouteMode,
+    setRouteProfile,
+    setControlPoints,
+    setWaypoints,
+    setReturnOnFinish,
+    setStartFromRealGps
+  ])
 
   // Save client-only settings when they change
   useEffect(() => {
-    scheduleSaveSession({ returnOnFinish, startFromRealGps })
-  }, [returnOnFinish, startFromRealGps, scheduleSaveSession])
+    scheduleSaveSession({
+      speedMs,
+      fixedSpeed,
+      loop,
+      wanderEnabled,
+      wanderRadiusM,
+      routeMode,
+      routeProfile,
+      controlPoints,
+      waypoints: routeMode === 'manual' ? controlPoints : undefined,
+      returnOnFinish,
+      startFromRealGps
+    })
+  }, [
+    speedMs,
+    fixedSpeed,
+    loop,
+    wanderEnabled,
+    wanderRadiusM,
+    routeMode,
+    routeProfile,
+    controlPoints,
+    returnOnFinish,
+    startFromRealGps,
+    scheduleSaveSession
+  ])
 
   // Core IPC subscriptions
   useEffect(() => {

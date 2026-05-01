@@ -5,7 +5,7 @@ import { useDeviceStore } from '../../stores/device.store'
 import { useLocationStore } from '../../stores/location.store'
 import { haversineKm, getCooldownMinutes } from '@shared/geo'
 import { Button } from '../ui/Button'
-import { SegmentedControl, type SegmentedControlOption } from '../ui/SegmentedControl'
+import { SegmentedControl } from '../ui/SegmentedControl'
 import { Card } from '../ui/Card'
 import { ToggleButton } from '../ui/ToggleButton'
 import { Modal } from '../ui/Modal'
@@ -14,25 +14,43 @@ type EndMode = 'loop' | 'wander' | 'none'
 
 export function RoutePanel(): JSX.Element {
   const waypoints = useRouteStore((s) => s.waypoints)
+  const controlPoints = useRouteStore((s) => s.controlPoints)
+  const routeMode = useRouteStore((s) => s.routeMode)
+  const routeProfile = useRouteStore((s) => s.routeProfile)
+  const plannedWaypoints = useRouteStore((s) => s.plannedWaypoints)
+  const plannedTotalDistanceKm = useRouteStore((s) => s.plannedTotalDistanceKm)
+  const plannedTotalDurationSec = useRouteStore((s) => s.plannedTotalDurationSec)
+  const planWarnings = useRouteStore((s) => s.planWarnings)
+  const planStatus = useRouteStore((s) => s.planStatus)
+  const planError = useRouteStore((s) => s.planError)
+
   const playing = useRouteStore((s) => s.playing)
   const isPaused = useRouteStore((s) => s.isPaused)
   const wandering = useRouteStore((s) => s.wandering)
   const loop = useRouteStore((s) => s.loop)
   const speedMs = useRouteStore((s) => s.speedMs)
+  const fixedSpeed = useRouteStore((s) => s.fixedSpeed)
   const returnOnFinish = useRouteStore((s) => s.returnOnFinish)
   const startFromRealGps = useRouteStore((s) => s.startFromRealGps)
   const wanderEnabled = useRouteStore((s) => s.wanderEnabled)
   const wanderRadiusM = useRouteStore((s) => s.wanderRadiusM)
+
   const clearWaypoints = useRouteStore((s) => s.clearWaypoints)
-  const removeWaypoint = useRouteStore((s) => s.removeWaypoint)
+  const removeControlPoint = useRouteStore((s) => s.removeControlPoint)
   const setLoop = useRouteStore((s) => s.setLoop)
   const setPlaying = useRouteStore((s) => s.setPlaying)
   const setIsPaused = useRouteStore((s) => s.setIsPaused)
   const setWaypoints = useRouteStore((s) => s.setWaypoints)
+  const setPlannedRoute = useRouteStore((s) => s.setPlannedRoute)
+  const clearPlannedRoute = useRouteStore((s) => s.clearPlannedRoute)
+  const setRouteMode = useRouteStore((s) => s.setRouteMode)
+  const setRouteProfile = useRouteStore((s) => s.setRouteProfile)
+  const setPlanStatus = useRouteStore((s) => s.setPlanStatus)
   const setReturnOnFinish = useRouteStore((s) => s.setReturnOnFinish)
   const setStartFromRealGps = useRouteStore((s) => s.setStartFromRealGps)
   const setWanderEnabled = useRouteStore((s) => s.setWanderEnabled)
   const setWanderRadiusM = useRouteStore((s) => s.setWanderRadiusM)
+  const setFixedSpeed = useRouteStore((s) => s.setFixedSpeed)
 
   const getTargetSerials = useDeviceStore((s) => s.getTargetSerials)
   const activeDevice = useDeviceStore((s) => s.activeDevice)
@@ -45,13 +63,11 @@ export function RoutePanel(): JSX.Element {
   const [isPlaying, setIsPlaying] = useState(false)
   const [showClearDialog, setShowClearDialog] = useState(false)
 
-  // Effective target serials: selectedSerials if non-empty, otherwise [activeDevice]
   const effectiveTargets = useMemo(() => {
     if (selectedSerials.length > 0) return selectedSerials
     return activeDevice ? [activeDevice] : []
   }, [selectedSerials, activeDevice])
 
-  // When a device is (re-)added while the route is actively playing, auto-resume routing on it.
   const prevTargetsRef = useRef<string[]>([])
   const wasPlayingRef = useRef(false)
   useEffect(() => {
@@ -68,6 +84,7 @@ export function RoutePanel(): JSX.Element {
             await window.api.routeSetWaypoints(waypoints, [serial])
             window.api.routeSetLoop(loop)
             window.api.routeSetWander(wanderEnabled, wanderRadiusM)
+            window.api.routeSetFixedSpeed(fixedSpeed)
             await window.api.routePlay([serial], speedMs)
           }
         })()
@@ -75,9 +92,8 @@ export function RoutePanel(): JSX.Element {
     }
 
     prevTargetsRef.current = effectiveTargets
-  }, [effectiveTargets, playing, isPaused, waypoints, speedMs, loop, wanderEnabled, wanderRadiusM])
+  }, [effectiveTargets, playing, isPaused, waypoints, speedMs, loop, wanderEnabled, wanderRadiusM, fixedSpeed])
 
-  // Derived end-mode for mutually exclusive Loop / Wander
   const endMode: EndMode = loop ? 'loop' : wanderEnabled ? 'wander' : 'none'
 
   const setEndMode = (mode: EndMode): void => {
@@ -104,14 +120,58 @@ export function RoutePanel(): JSX.Element {
     window.api.routeSetWander(wanderEnabled, wanderRadiusM)
   }, [wanderEnabled, wanderRadiusM])
 
-  // Also sync when waypoints change
+  // Sync fixed speed toggle to backend
   useEffect(() => {
-    window.api.routeSetWander(wanderEnabled, wanderRadiusM)
-  }, [waypoints.length]) // eslint-disable-line react-hooks/exhaustive-deps
+    window.api.routeSetFixedSpeed(fixedSpeed)
+  }, [fixedSpeed])
+
+  // Re-plan road-network route on control-point/profile/loop changes.
+  useEffect(() => {
+    if (routeMode !== 'road-network') return
+
+    if (controlPoints.length === 0) {
+      clearPlannedRoute()
+      setPlanStatus('idle', null)
+      return
+    }
+
+    if (controlPoints.length < 2) {
+      clearPlannedRoute()
+      setPlanStatus('error', 'Road-network mode needs at least 2 control points')
+      return
+    }
+
+    let cancelled = false
+    const timer = setTimeout(() => {
+      ;(async (): Promise<void> => {
+        setPlanStatus('planning', null)
+        try {
+          const result = await window.api.routePlanRoadNetwork({
+            controlPoints,
+            profile: routeProfile,
+            loop
+          })
+          if (cancelled) return
+          setPlannedRoute(result)
+        } catch (error: any) {
+          if (cancelled) return
+          const message = error?.message || 'Failed to plan route over road network'
+          setPlanStatus('error', message)
+        }
+      })()
+    }, 250)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [routeMode, controlPoints, routeProfile, loop, clearPlannedRoute, setPlanStatus, setPlannedRoute])
 
   const handlePlay = async (): Promise<void> => {
     const targetSerials = getTargetSerials()
     if (targetSerials.length === 0 || waypoints.length < 2) return
+    if (routeMode === 'road-network' && planStatus === 'planning' && plannedWaypoints.length === 0) return
+
     setIsPlaying(true)
 
     if (isPaused) {
@@ -124,9 +184,9 @@ export function RoutePanel(): JSX.Element {
 
     await Promise.all(targetSerials.map((s) => window.api.enableMockLocation(s)))
     await window.api.routeSetWaypoints(waypoints, targetSerials)
-    // Re-sync loop/wander now that engines exist (they may have been sent before engine creation)
     window.api.routeSetLoop(loop)
     window.api.routeSetWander(wanderEnabled, wanderRadiusM)
+    window.api.routeSetFixedSpeed(fixedSpeed)
 
     let fromLat: number | undefined
     let fromLng: number | undefined
@@ -163,12 +223,11 @@ export function RoutePanel(): JSX.Element {
   }
 
   const handleClearRoute = async (): Promise<void> => {
-    // If route is actively playing or paused, show confirmation dialog
     if (playing || isPaused || wandering) {
       setShowClearDialog(true)
       return
     }
-    // Not active — just clear waypoints
+
     await window.api.routeStop()
     clearWaypoints()
     setIsPaused(false)
@@ -177,7 +236,6 @@ export function RoutePanel(): JSX.Element {
     setIsPlaying(false)
   }
 
-  /** Clear route and stay at current spoofed position (keep mock GPS active). */
   const handleClearStay = async (): Promise<void> => {
     setShowClearDialog(false)
     await window.api.routeStopStay()
@@ -188,7 +246,6 @@ export function RoutePanel(): JSX.Element {
     setIsPlaying(false)
   }
 
-  /** Clear route and remove mock GPS (phone returns to real location). */
   const handleClearRemove = async (): Promise<void> => {
     setShowClearDialog(false)
     await window.api.routeStop()
@@ -210,6 +267,7 @@ export function RoutePanel(): JSX.Element {
   const handleImportGpx = async (): Promise<void> => {
     const result = await window.api.importGpx()
     if (result && result.length > 0) {
+      setRouteMode('manual')
       setWaypoints(result)
       await window.api.routeSetWaypoints(result)
     }
@@ -218,29 +276,73 @@ export function RoutePanel(): JSX.Element {
   const hasDevice = !!activeDevice
   const canReturn = !!realGpsLocation
 
-  // Route distance & ETA
   const routeInfo = useMemo(() => {
     if (waypoints.length < 2) return null
-    let totalKm = 0
-    for (let i = 1; i < waypoints.length; i++) {
-      totalKm += haversineKm(waypoints[i - 1].lat, waypoints[i - 1].lng, waypoints[i].lat, waypoints[i].lng)
+
+    let totalKm = plannedTotalDistanceKm
+    if (!(routeMode === 'road-network' && plannedTotalDistanceKm > 0)) {
+      totalKm = 0
+      for (let i = 1; i < waypoints.length; i++) {
+        totalKm += haversineKm(waypoints[i - 1].lat, waypoints[i - 1].lng, waypoints[i].lat, waypoints[i].lng)
+      }
+      if (routeMode === 'manual' && loop) {
+        totalKm += haversineKm(
+          waypoints[waypoints.length - 1].lat,
+          waypoints[waypoints.length - 1].lng,
+          waypoints[0].lat,
+          waypoints[0].lng
+        )
+      }
     }
-    if (loop) {
-      totalKm += haversineKm(
-        waypoints[waypoints.length - 1].lat, waypoints[waypoints.length - 1].lng,
-        waypoints[0].lat, waypoints[0].lng
-      )
-    }
-    const totalSec = (totalKm * 1000) / speedMs
+
+    const totalSec = routeMode === 'road-network' && plannedTotalDurationSec > 0
+      ? plannedTotalDurationSec
+      : (totalKm * 1000) / speedMs
+
     const hours = Math.floor(totalSec / 3600)
     const mins = Math.ceil((totalSec % 3600) / 60)
     const eta = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`
     return { totalKm, eta }
-  }, [waypoints, loop, speedMs])
+  }, [waypoints, loop, speedMs, routeMode, plannedTotalDistanceKm, plannedTotalDurationSec])
+
+  const playDisabled =
+    !hasDevice ||
+    waypoints.length < 2 ||
+    isPlaying ||
+    (routeMode === 'road-network' && planStatus === 'planning' && plannedWaypoints.length === 0)
 
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold text-foreground">Route</h3>
+
+      <div>
+        <p className="text-xs text-foreground-secondary mb-2 font-medium">Route mode:</p>
+        <SegmentedControl
+          options={[
+            { value: 'manual', label: 'Manual' },
+            { value: 'road-network', label: 'Road Network' }
+          ]}
+          value={routeMode}
+          onChange={(value) => setRouteMode(value as 'manual' | 'road-network')}
+          fullWidth
+        />
+      </div>
+
+      {routeMode === 'road-network' && (
+        <div>
+          <p className="text-xs text-foreground-secondary mb-2 font-medium">Road profile:</p>
+          <SegmentedControl
+            options={[
+              { value: 'walk', label: 'Walk' },
+              { value: 'cycle', label: 'Cycle' },
+              { value: 'drive', label: 'Drive' }
+            ]}
+            value={routeProfile}
+            onChange={(value) => setRouteProfile(value as 'walk' | 'cycle' | 'drive')}
+            fullWidth
+          />
+        </div>
+      )}
 
       {/* Playback controls */}
       <div className="flex gap-2">
@@ -249,7 +351,7 @@ export function RoutePanel(): JSX.Element {
             <Button
               variant="primary"
               onClick={handlePlay}
-              disabled={!hasDevice || waypoints.length < 2 || isPlaying}
+              disabled={playDisabled}
               isLoading={isPlaying}
               className="flex-1 bg-success hover:bg-success-hover"
             >
@@ -281,7 +383,7 @@ export function RoutePanel(): JSX.Element {
         <Button
           variant="secondary"
           onClick={handleClearRoute}
-          disabled={waypoints.length === 0 && !playing && !isPaused && !wandering}
+          disabled={controlPoints.length === 0 && !playing && !isPaused && !wandering}
           title="Clear route and reset"
         >
           <Trash2 size={16} />
@@ -290,20 +392,33 @@ export function RoutePanel(): JSX.Element {
 
       {returnMsg && <p className="text-xs text-danger">{returnMsg}</p>}
 
-      {/* Cooldown display after stop */}
       {stopCooldown && (
         <Card className="border-warning/40 bg-warning/10">
           <p className="text-xs">
-            <span className="text-warning font-medium">
-              {stopCooldown.distKm.toFixed(1)} km from GPS
-            </span>
+            <span className="text-warning font-medium">{stopCooldown.distKm.toFixed(1)} km from GPS</span>
             {' — cooldown '}
             <span className="text-warning font-medium">{stopCooldown.minutes} min</span>
           </p>
         </Card>
       )}
 
-      {/* Route distance + ETA */}
+      {routeMode === 'road-network' && (
+        <Card glass className="p-3 space-y-1.5">
+          <p className="text-xs text-foreground-secondary">
+            Planner: {planStatus === 'planning' ? 'Planning...' : planStatus}
+          </p>
+          {planError && (
+            <p className="text-xs text-danger">{planError}</p>
+          )}
+          {planWarnings.slice(0, 2).map((warning, i) => (
+            <p key={i} className="text-xs text-warning">{warning}</p>
+          ))}
+          <p className="text-xs text-foreground-muted">
+            Control points {controlPoints.length} · Planned points {waypoints.length}
+          </p>
+        </Card>
+      )}
+
       {routeInfo && (
         <div className="flex items-center justify-between text-xs text-foreground-secondary bg-surface-elevated rounded-[var(--radius-sm)] px-3 py-2">
           <span className="text-mono">{routeInfo.totalKm.toFixed(2)} km</span>
@@ -332,7 +447,7 @@ export function RoutePanel(): JSX.Element {
               max={500}
               step={10}
               value={wanderRadiusM}
-              onChange={(e) => setWanderRadiusM(parseInt(e.target.value))}
+              onChange={(e) => setWanderRadiusM(parseInt(e.target.value, 10))}
               className="w-full accent-primary"
             />
             <p className="text-xs text-foreground-muted text-center mt-2 text-mono">
@@ -342,7 +457,6 @@ export function RoutePanel(): JSX.Element {
         )}
       </div>
 
-      {/* Options */}
       <div className="space-y-2">
         <ToggleButton
           checked={startFromRealGps}
@@ -355,13 +469,19 @@ export function RoutePanel(): JSX.Element {
           onChange={setReturnOnFinish}
           label="Return to GPS when done"
         />
+        <ToggleButton
+          checked={fixedSpeed}
+          onChange={setFixedSpeed}
+          label="Fixed speed (no random)"
+        />
       </div>
 
-      {/* Waypoint list */}
-      {waypoints.length > 0 ? (
+      {controlPoints.length > 0 ? (
         <div>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-foreground-secondary font-medium">{waypoints.length} waypoints</span>
+            <span className="text-xs text-foreground-secondary font-medium">
+              {controlPoints.length} control points
+            </span>
             <button
               onClick={clearWaypoints}
               disabled={playing || isPaused}
@@ -371,7 +491,7 @@ export function RoutePanel(): JSX.Element {
             </button>
           </div>
           <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
-            {waypoints.map((wp, i) => (
+            {controlPoints.map((wp, i) => (
               <Card
                 key={i}
                 elevation="flat"
@@ -383,8 +503,8 @@ export function RoutePanel(): JSX.Element {
                 <Button
                   variant="icon"
                   size="sm"
-                  onClick={() => removeWaypoint(i)}
-                  aria-label={`Remove waypoint ${i + 1}`}
+                  onClick={() => removeControlPoint(i)}
+                  aria-label={`Remove control point ${i + 1}`}
                   disabled={playing || isPaused}
                   className="text-danger hover:bg-danger/10"
                 >
@@ -396,19 +516,19 @@ export function RoutePanel(): JSX.Element {
         </div>
       ) : (
         <p className="text-xs text-foreground-muted text-center py-4">
-          Click the map to add waypoints
+          Click the map to add control points
         </p>
       )}
 
-      {/* Import GPX */}
-      <button
-        onClick={handleImportGpx}
-        className="w-full text-xs text-foreground-secondary hover:text-foreground flex items-center justify-center gap-1.5 py-2 border-t border-border transition-colors"
-      >
-        <FileUp size={14} /> Import GPX
-      </button>
+      {routeMode === 'manual' && (
+        <button
+          onClick={handleImportGpx}
+          className="w-full text-xs text-foreground-secondary hover:text-foreground flex items-center justify-center gap-1.5 py-2 border-t border-border transition-colors"
+        >
+          <FileUp size={14} /> Import GPX
+        </button>
+      )}
 
-      {/* Clear route confirmation dialog */}
       <Modal
         isOpen={showClearDialog}
         onClose={() => setShowClearDialog(false)}

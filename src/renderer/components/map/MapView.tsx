@@ -77,17 +77,17 @@ function AutoPanToRealGps(): null {
 
 function MapClickHandler(): null {
   const mapClickMode = useUiStore((s) => s.mapClickMode)
-  const addWaypoint = useRouteStore((s) => s.addWaypoint)
+  const addControlPoint = useRouteStore((s) => s.addControlPoint)
   const setLoop = useRouteStore((s) => s.setLoop)
   const setPendingTeleport = useLocationStore((s) => s.setPendingTeleport)
 
   useMapEvents({
     click: (e) => {
       if (mapClickMode === 'route') {
-        const waypoints = useRouteStore.getState().waypoints
-        // Snap-to-close: if ≥3 waypoints and click within 50m of first, enable loop
-        if (waypoints.length >= 3) {
-          const first = waypoints[0]
+        const controlPoints = useRouteStore.getState().controlPoints
+        // Snap-to-close: if ≥2 points and click within 50m of first, enable loop
+        if (controlPoints.length >= 2) {
+          const first = controlPoints[0]
           const distM = e.latlng.distanceTo(L.latLng(first.lat, first.lng))
           if (distM <= 50) {
             setLoop(true)
@@ -95,7 +95,7 @@ function MapClickHandler(): null {
             return
           }
         }
-        addWaypoint({ lat: e.latlng.lat, lng: e.latlng.lng })
+        addControlPoint({ lat: e.latlng.lat, lng: e.latlng.lng })
       } else if (mapClickMode === 'teleport') {
         setPendingTeleport({ lat: e.latlng.lat, lng: e.latlng.lng })
       }

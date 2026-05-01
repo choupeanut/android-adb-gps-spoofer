@@ -130,7 +130,7 @@ export function Sidebar(): JSX.Element {
           <div>
             <div className="px-4 pt-3 pb-1">
               <p className="text-xs text-muted-foreground">
-                Click map to add waypoints, import GPX, then press Play.
+                Click map to add control points. Use Manual for GPX or Road Network for auto-planned roads.
               </p>
             </div>
             <RoutePanel />

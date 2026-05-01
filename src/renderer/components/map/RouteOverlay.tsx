@@ -14,37 +14,43 @@ function waypointIcon(index: number, isFirst: boolean, isLast: boolean): L.DivIc
 }
 
 export function RouteOverlay(): JSX.Element {
+  const routeMode = useRouteStore((s) => s.routeMode)
+  const controlPoints = useRouteStore((s) => s.controlPoints)
   const waypoints = useRouteStore((s) => s.waypoints)
   const loop = useRouteStore((s) => s.loop)
   const wanderEnabled = useRouteStore((s) => s.wanderEnabled)
   const wanderRadiusM = useRouteStore((s) => s.wanderRadiusM)
   const playing = useRouteStore((s) => s.playing)
 
-  if (waypoints.length === 0) return <></>
+  if (controlPoints.length === 0 && waypoints.length === 0) return <></>
 
   const positions = waypoints.map((wp) => [wp.lat, wp.lng] as [number, number])
   // Close the loop visually if loop is enabled
-  const polyPositions = loop ? [...positions, positions[0]] : positions
+  const polyPositions = routeMode === 'manual' && loop && positions.length > 0
+    ? [...positions, positions[0]]
+    : positions
 
-  const lastWp = waypoints[waypoints.length - 1]
+  const lastWp = controlPoints[controlPoints.length - 1]
 
   return (
     <>
       {/* Route line */}
-      <Polyline
-        positions={polyPositions}
-        color="#63b3ed"
-        weight={3}
-        opacity={0.8}
-        dashArray={playing ? undefined : '8 6'}
-      />
+      {polyPositions.length >= 2 && (
+        <Polyline
+          positions={polyPositions}
+          color="#63b3ed"
+          weight={3}
+          opacity={0.8}
+          dashArray={playing ? undefined : '8 6'}
+        />
+      )}
 
       {/* Waypoint markers with numbers */}
-      {waypoints.map((wp, i) => (
+      {controlPoints.map((wp, i) => (
         <Marker
           key={i}
           position={[wp.lat, wp.lng]}
-          icon={waypointIcon(i, i === 0, i === waypoints.length - 1)}
+          icon={waypointIcon(i, i === 0, i === controlPoints.length - 1)}
         >
           <Tooltip direction="top" offset={[0, -12]} className="text-[10px]">
             #{i + 1} ({wp.lat.toFixed(4)}, {wp.lng.toFixed(4)})

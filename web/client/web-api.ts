@@ -151,6 +151,7 @@ const api = {
 
   // Route
   routeSetWaypoints: (waypoints: any[], serials?: string[]) => wsInvoke('route-set-waypoints', waypoints, serials),
+  routePlanRoadNetwork: (request: any) => wsInvoke('route-plan-road-network', request),
   routePlay: (serials: string[], speedMs: number, fromLat?: number, fromLng?: number) =>
     wsInvoke('route-play', serials, speedMs, fromLat, fromLng),
   routePause: () => wsInvoke('route-pause'),
@@ -163,6 +164,7 @@ const api = {
   routeSetWander: (enabled: boolean, radiusM: number) =>
     wsInvoke('route-set-wander', enabled, radiusM),
   routeSetSpeed: (speedMs: number) => wsInvoke('route-set-speed', speedMs),
+  routeSetFixedSpeed: (enabled: boolean) => wsInvoke('route-set-fixed-speed', enabled),
 
   // GPX — web version uses file input + server-side parse
   importGpx: async () => {

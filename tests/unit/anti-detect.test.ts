@@ -63,13 +63,13 @@ describe('applySpeedFluctuation', () => {
     expect(applySpeedFluctuation(0)).toBe(0)
   })
 
-  it('varies speed by at most 15% (3-sigma range covers ±15%)', () => {
+  it('varies speed by at most 5%', () => {
     const base = 1.4
     for (let i = 0; i < 100; i++) {
       const result = applySpeedFluctuation(base)
       expect(result).toBeGreaterThan(0)
-      // At most 30% deviation (±15% range)
-      expect(result).toBeLessThan(base * 1.5)
+      expect(result).toBeGreaterThanOrEqual(base * 0.95)
+      expect(result).toBeLessThanOrEqual(base * 1.05)
     }
   })
 

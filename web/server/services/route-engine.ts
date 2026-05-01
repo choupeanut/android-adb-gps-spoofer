@@ -49,6 +49,7 @@ export class RouteEngine {
   private currentLocation: LocationUpdate | null = null
   private targetSerials: string[] = []
   private speedMs = 1.4
+  private fixedSpeed = false
   private wanderEnabled = false
   private wanderRadiusM = 100
   /** Backpressure guard: skip tick if previous push still in-flight (W2) */
@@ -175,6 +176,7 @@ export class RouteEngine {
   setLoop(loop: boolean): void { this.state.loop = loop }
   setReverse(reverse: boolean): void { this.state.reverse = reverse }
   setSpeed(speedMs: number): void { this.speedMs = speedMs }
+  setFixedSpeed(enabled: boolean): void { this.fixedSpeed = enabled }
 
   private startTimer(): void {
     this.stopTimer()
@@ -341,7 +343,7 @@ export class RouteEngine {
     const wp = this.state.waypoints
     if (wp.length < 2) return
 
-    const currentSpeed = applySpeedFluctuation(this.speedMs)
+    const currentSpeed = this.fixedSpeed ? this.speedMs : applySpeedFluctuation(this.speedMs)
     const stepKm = (currentSpeed * UPDATE_INTERVAL_MS) / 1000 / 1000
 
     const idx = this.state.currentWaypointIndex
