@@ -6,8 +6,8 @@ import { UPDATE_INTERVAL_MS, DEFAULT_ACCURACY } from '@shared/constants'
 import { log } from '../logger'
 import type { LocationUpdate, SpoofMode } from '@shared/types'
 
-const GLIDE_MAX_KM = 1.0    // 1 km — beyond this, instant teleport
-const GLIDE_SPEED_MS = 1.4  // walk speed for teleport glide
+const GRACEFUL_STOP_GLIDE_MAX_KM = 1.0
+const GLIDE_SPEED_MS = 1.4  // walk speed for graceful-stop glide
 
 export class LocationEngine {
   private adb: AdbService
@@ -34,24 +34,8 @@ export class LocationEngine {
     this.targetSerials = serials
     this.mode = 'teleport'
 
-    const from = this.currentLocation
-    if (from) {
-      const distKm = haversineDistance(from.lat, from.lng, lat, lng)
-      if (distKm > 0.001 && distKm <= GLIDE_MAX_KM) {
-        log('info', `[Teleport] gliding ${(distKm * 1000).toFixed(0)}m → ${lat.toFixed(6)}, ${lng.toFixed(6)}`)
-        this.notifyRenderer()
-        this.glideTo(serials, from.lat, from.lng, lat, lng, () => {
-          this.currentLocation = {
-            lat, lng, altitude: 0, accuracy: DEFAULT_ACCURACY,
-            bearing: 0, speed: 0, timestamp: Date.now()
-          }
-          this.startKeepAlive(serials)
-        })
-        return true
-      }
-    }
-
-    // Instant teleport
+    // Teleport must be immediate on every platform. Glide behavior is reserved for
+    // graceful stop and route transitions where gradual movement is explicit.
     const loc: LocationUpdate = {
       lat, lng, altitude: 0, accuracy: DEFAULT_ACCURACY,
       bearing: 0, speed: 0, timestamp: Date.now()
@@ -229,7 +213,7 @@ export class LocationEngine {
     const from = this.currentLocation
     if (from) {
       const distKm = haversineDistance(from.lat, from.lng, realLat, realLng)
-      if (distKm > 0.001 && distKm <= 1.0) {
+      if (distKm > 0.001 && distKm <= GRACEFUL_STOP_GLIDE_MAX_KM) {
         log('info', `[StopGraceful] walking ${(distKm * 1000).toFixed(0)} m back to real GPS`)
         this.glideTo(serials, from.lat, from.lng, realLat, realLng, () => {
           this.stop(serials).catch(() => {})

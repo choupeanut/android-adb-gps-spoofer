@@ -32,7 +32,7 @@ The implementation is optimized for controlled Android location-testing workflow
 **Location Control**
 
 - Teleport by map click or manual latitude/longitude
-- Smooth short-distance teleport glide up to 1 km when a current mock position is known
+- Teleport always pushes the target coordinate immediately
 - Joystick mode with virtual joystick plus `W/A/S/D` and arrow keys
 - Manual multi-waypoint routes
 - Road-network route planning through OSRM for `walk`, `cycle`, and `drive`
@@ -226,7 +226,7 @@ Android ADB GPS Spoofer 是一個透過 ADB 控制 Android GPS test provider 的
 **位置控制**
 
 - 地圖點選或手動座標瞬移
-- 已知目前 mock 位置時，1 km 內會用步行速度平滑滑行
+- Teleport 一律立即推送目標座標
 - 虛擬搖桿、`W/A/S/D`、方向鍵
 - 手動多點路線
 - OSRM road-network 路線規劃：`walk`、`cycle`、`drive`

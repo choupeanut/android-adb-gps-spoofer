@@ -75,7 +75,7 @@ Build a standalone Android GPS spoofing app using Shizuku Shell API to enable **
 │  │  ┌─────────────────────────────────────────────────────┐        │    │
 │  │  │ LocationEngine (Port: location-engine.ts)          │        │    │
 │  │  │  · Mode: IDLE / TELEPORT / JOYSTICK / KEEP_ALIVE   │        │    │
-│  │  │  · Teleport: >1km instant, ≤1km glide @1.4m/s      │        │    │
+│  │  │  · Teleport: always immediate coordinate push        │        │    │
 │  │  │  · Joystick: continuous bearing+speed updates      │        │    │
 │  │  │  · Keep-alive: dual-channel (1000ms + 2500ms)      │        │    │
 │  │  │  · Backpressure: AtomicBoolean guard               │        │    │
@@ -254,8 +254,7 @@ object Timing {
 
 object Location {
     const val DEFAULT_ACCURACY = 10           // meters
-    const val GLIDE_MAX_KM = 1.0             // Teleport vs glide threshold
-    const val GLIDE_SPEED_MS = 1.4           // Walk speed for glide interpolation
+    const val GLIDE_SPEED_MS = 1.4           // Walk speed for explicit glide interpolation
 }
 
 object AntiDetect {
@@ -297,7 +296,7 @@ val COOLDOWN_TABLE = listOf(
 - **Preset Chips**: Walk | Cycle | Drive | HSR | Plane (horizontally scrollable)
 - **Long-press**: Opens custom speed slider (0.1 - 300 m/s)
 - **Display**: Shows both m/s and km/h conversion
-- **Scope**: Applies to all modes (teleport glide, joystick, route playback)
+- **Scope**: Applies to movement modes such as joystick and route playback
 
 ### Route Semantics (Explicit States)
 
@@ -585,7 +584,7 @@ fun shizukuShell_mockLocationCommand_correctSyntax() = runTest {
 - [ ] **Shizuku Permission**: SetupScreen guides user through wireless pairing → `uid=2000` shell execution confirmed
 - [ ] **Test Provider Setup**: `cmd location providers add-test-provider gps` succeeds → system GPS shows mock indicator
 - [ ] **Teleport (>1km)**: Enter 35.6762,139.6503 → map jumps → Google Maps shows spoofed location
-- [ ] **Glide (≤1km)**: 500m teleport → smooth 7-minute walk animation (not instant)
+- [ ] **Teleport**: 500m teleport pushes the target coordinate immediately
 - [ ] **Keep-alive**: Idle for 5 minutes → GPS does not snap back to real position
 - [ ] **Route Playback**: 3+ waypoints → Play → observe smooth movement along polyline → Pause → position stable
 - [ ] **Loop Mode**: 3 waypoints, loop enabled → reaches end → restarts from waypoint 0

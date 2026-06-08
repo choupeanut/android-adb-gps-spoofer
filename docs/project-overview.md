@@ -107,7 +107,7 @@ tests/
 | `AdbService` | Resolves ADB path, lists devices, tests connection, enables mock location, pushes coordinates, reads real location, manages Wi-Fi ADB |
 | `DeviceManager` | Polls `adb devices -l` every 3 seconds and broadcasts changes |
 | `DeviceEngineManager` | Creates and prunes per-device location/route engines |
-| `LocationEngine` | Teleport, short glide, joystick keep-alive, graceful stop |
+| `LocationEngine` | Immediate teleport, joystick keep-alive, graceful stop |
 | `RouteEngine` | Route playback, pause/resume, loop, wander, fixed speed, return-to-GPS, stale-push watchdog |
 | `RoutePlannerService` | Calls OSRM and converts control points into routed waypoints |
 | `Database` | Saved locations, 100-entry history, session persistence |
@@ -141,8 +141,7 @@ Real GPS readback defaults to network-provider-only parsing because `gps`, `fuse
 
 | Behavior | Implementation |
 |---|---|
-| Teleport | Immediate push unless existing mock location is within 1 km |
-| Teleport glide | Walk-speed glide using 500 ms updates |
+| Teleport | Always pushes the target coordinate immediately |
 | Teleport hold | Primary keep-alive every 500 ms plus backup every 1000 ms |
 | Joystick | Position updates at 500 ms, speed from TopBar |
 | Route playback | Interpolates between waypoints every 500 ms |

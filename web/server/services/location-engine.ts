@@ -10,7 +10,7 @@ import { UPDATE_INTERVAL_MS, DEFAULT_ACCURACY } from '@shared/constants'
 import { log } from '../logger'
 import type { LocationUpdate, SpoofMode } from '@shared/types'
 
-const GLIDE_MAX_KM = 1.0
+const GRACEFUL_STOP_GLIDE_MAX_KM = 1.0
 const GLIDE_SPEED_MS = 1.4
 /** Gaussian-like micro-jitter sigma in degrees (~1.7m at equator) */
 const JITTER_SIGMA = 0.000015
@@ -48,22 +48,8 @@ export class LocationEngine {
     this.targetSerials = serials
     this.mode = 'teleport'
 
-    const from = this.currentLocation
-    if (from) {
-      const distKm = haversineDistance(from.lat, from.lng, lat, lng)
-      if (distKm > 0.001 && distKm <= GLIDE_MAX_KM) {
-        this.notifyRenderer()
-        this.glideTo(serials, from.lat, from.lng, lat, lng, () => {
-          this.currentLocation = {
-            lat, lng, altitude: 0, accuracy: DEFAULT_ACCURACY,
-            bearing: 0, speed: 0, timestamp: Date.now()
-          }
-          this.startKeepAlive(serials)
-        })
-        return true
-      }
-    }
-
+    // Teleport is intentionally immediate. Gradual movement is reserved for
+    // graceful stop and route transitions where the caller asks for it.
     const loc: LocationUpdate = {
       lat, lng, altitude: 0, accuracy: DEFAULT_ACCURACY,
       bearing: 0, speed: 0, timestamp: Date.now()
@@ -185,7 +171,7 @@ export class LocationEngine {
     const from = this.currentLocation
     if (from) {
       const distKm = haversineDistance(from.lat, from.lng, realLat, realLng)
-      if (distKm > 0.001 && distKm <= 1.0) {
+      if (distKm > 0.001 && distKm <= GRACEFUL_STOP_GLIDE_MAX_KM) {
         this.glideTo(serials, from.lat, from.lng, realLat, realLng, () => {
           this.stop(serials).catch(() => {})
         })

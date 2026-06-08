@@ -128,7 +128,7 @@ From `src/shared/constants.ts`:
 Location engine:
 
 - teleport
-- <= 1 km teleport glide
+- teleport always pushes the target coordinate immediately
 - joystick keep-alive
 - graceful stop
 - backup keep-alive timer
