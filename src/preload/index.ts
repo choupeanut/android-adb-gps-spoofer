@@ -68,6 +68,11 @@ const api = {
   getLocationHistory: () => ipcRenderer.invoke('locations-get-history'),
   addLocationHistory: (lat: number, lng: number) =>
     ipcRenderer.invoke('locations-add-history', lat, lng),
+  getWifiIpHistory: () => ipcRenderer.invoke('wifi-ip-history-get'),
+  recordWifiIp: (ip: string, port: number) =>
+    ipcRenderer.invoke('wifi-ip-history-record', ip, port),
+  deleteWifiIpHistory: (ip: string, port: number) =>
+    ipcRenderer.invoke('wifi-ip-history-delete', ip, port),
 
   // Events
   onDevicesChanged: (callback: (data: unknown) => void) => {

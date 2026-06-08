@@ -1,5 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useDeviceStore } from '../../stores/device.store'
+import {
+  mergeWifiIpHistory,
+  recordWifiIpLocally,
+  sortWifiIpHistory
+} from '../../utils/wifi-ip-history'
+import type { WifiIpHistoryEntry } from '@shared/types'
 
 interface Props {
   onClose: () => void
@@ -8,13 +14,50 @@ interface Props {
 
 type Step = 'method' | 'wifi-ip' | 'usb-tcpip'
 
+const WIFI_HISTORY_KEY = 'gps-spoofer:wifi-ip-history'
+const QUICK_HISTORY_LIMIT = 5
+
+function readLocalHistory(): WifiIpHistoryEntry[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(WIFI_HISTORY_KEY) ?? '[]')
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((entry) =>
+      typeof entry.ip === 'string' &&
+      typeof entry.port === 'number' &&
+      typeof entry.useCount === 'number' &&
+      typeof entry.lastUsedAt === 'string'
+    )
+  } catch {
+    return []
+  }
+}
+
+function writeLocalHistory(entries: WifiIpHistoryEntry[]): void {
+  localStorage.setItem(WIFI_HISTORY_KEY, JSON.stringify(sortWifiIpHistory(entries).slice(0, 20)))
+}
+
 export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
   const devices = useDeviceStore((s) => s.devices)
+  const selectSerial = useDeviceStore((s) => s.selectSerial)
+  const setActiveDevice = useDeviceStore((s) => s.setActiveDevice)
   const [step, setStep] = useState<Step>('method')
   const [ip, setIp] = useState('')
   const [port, setPort] = useState('5555')
   const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(false)
+  const [ipHistory, setIpHistory] = useState<WifiIpHistoryEntry[]>([])
+
+  useEffect(() => {
+    const local = readLocalHistory()
+    setIpHistory(local)
+    window.api.getWifiIpHistory()
+      .then((serverHistory: WifiIpHistoryEntry[]) => {
+        const merged = mergeWifiIpHistory(local, serverHistory)
+        setIpHistory(merged)
+        writeLocalHistory(merged)
+      })
+      .catch(() => {})
+  }, [])
 
   // Auto-detect client LAN IP (web only)
   useEffect(() => {
@@ -26,17 +69,51 @@ export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const recordIp = async (nextIp: string, nextPort: number): Promise<void> => {
+    const local = readLocalHistory()
+    const localNext = recordWifiIpLocally(local, nextIp, nextPort)
+    setIpHistory(localNext)
+    writeLocalHistory(localNext)
+
+    try {
+      const serverNext = await window.api.recordWifiIp(nextIp, nextPort)
+      const merged = mergeWifiIpHistory(localNext, serverNext)
+      setIpHistory(merged)
+      writeLocalHistory(merged)
+    } catch {
+      // Local history is still useful if the shared database is unavailable.
+    }
+  }
+
+  const deleteIpHistory = async (entry: WifiIpHistoryEntry): Promise<void> => {
+    const next = readLocalHistory().filter((item) => item.ip !== entry.ip || item.port !== entry.port)
+    setIpHistory(next)
+    writeLocalHistory(next)
+    await window.api.deleteWifiIpHistory(entry.ip, entry.port).catch(() => {})
+  }
+
+  const markDeviceSelected = (serial: string): void => {
+    selectSerial(serial)
+    if (!useDeviceStore.getState().activeDevice) {
+      setActiveDevice(serial)
+      window.api.setActiveDevice(serial).catch(() => {})
+    }
+  }
+
   const handleConnectWifi = async (): Promise<void> => {
     if (!ip.trim()) return
+    const cleanIp = ip.trim()
+    const cleanPort = parseInt(port) || 5555
     setLoading(true)
     setStatus('Connecting...')
     try {
-      const result = await window.api.connectWifi(ip.trim(), parseInt(port) || 5555)
+      const result = await window.api.connectWifi(cleanIp, cleanPort)
       const connected = typeof result === 'boolean' ? result : result.ok
       if (connected) {
+        await recordIp(cleanIp, cleanPort)
         setStatus('Connected! Waiting for device…')
         // Wait for the device to appear as 'connected' in the devices list
-        const targetSerial = `${ip.trim()}:${parseInt(port) || 5555}`
+        const targetSerial = `${cleanIp}:${cleanPort}`
         let found = false
         for (let i = 0; i < 8; i++) {
           await new Promise((r) => setTimeout(r, 1000))
@@ -47,9 +124,11 @@ export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
           }
         }
         if (found) {
+          markDeviceSelected(targetSerial)
           setStatus('Device ready!')
           setTimeout(() => { onConnected(); onClose() }, 500)
         } else {
+          markDeviceSelected(targetSerial)
           setStatus('Device connected but not fully ready. It may appear shortly.')
           setTimeout(() => { onConnected(); onClose() }, 2000)
         }
@@ -81,7 +160,10 @@ export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
       const result = await window.api.enableTcpip(usbDevice.serial)
       if (result.success) {
         setStatus(`Ready. Device IP: ${result.ip ?? 'unknown'}. Now unplug USB and connect via Wi-Fi.`)
-        if (result.ip) setIp(result.ip)
+        if (result.ip) {
+          setIp(result.ip)
+          await recordIp(result.ip, parseInt(port) || 5555)
+        }
         setStep('wifi-ip')
       } else {
         setStatus('Failed. Make sure a device is connected via USB.')
@@ -129,6 +211,37 @@ export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
             <p className="text-xs text-muted-foreground">
               Enter the Android device's local IP address (find it in Settings → Wi-Fi → device info).
             </p>
+            {ipHistory.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {ipHistory.slice(0, QUICK_HISTORY_LIMIT).map((entry) => (
+                  <span
+                    key={`${entry.ip}:${entry.port}`}
+                    className="inline-flex items-center rounded-md border border-border bg-secondary/10 overflow-hidden"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIp(entry.ip)
+                        setPort(String(entry.port))
+                      }}
+                      className="px-2 py-1 text-xs text-primary hover:bg-secondary/15"
+                      title={`Used ${entry.useCount} time${entry.useCount === 1 ? '' : 's'}`}
+                    >
+                      {entry.ip}:{entry.port}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteIpHistory(entry)}
+                      className="px-1.5 py-1 text-xs text-muted-foreground hover:text-destructive"
+                      aria-label={`Remove ${entry.ip}:${entry.port}`}
+                      title="Remove from quick list"
+                    >
+                      &times;
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="flex gap-2">
               <input
                 type="text"

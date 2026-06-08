@@ -30,6 +30,22 @@ win:
         - x64
   icon: resources/icon.ico
 
+mac:
+  target:
+    - target: dmg
+      arch:
+        - universal
+    - target: zip
+      arch:
+        - universal
+  icon: resources/icon.icns
+  category: public.app-category.utilities
+  extraResources:
+    - from: resources/platform-tools-mac/
+      to: platform-tools
+      filter:
+        - adb
+
 linux:
   target:
     - target: AppImage

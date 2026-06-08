@@ -9,6 +9,7 @@ interface DeviceState {
   setActiveDevice: (serial: string | null) => void
   selectDevice: (serial: string) => void
   toggleSelectSerial: (serial: string) => void
+  selectSerial: (serial: string) => void
   selectAll: () => void
   clearSelection: () => void
   /** Returns selectedSerials if non-empty, else [activeDevice] */
@@ -42,6 +43,13 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
     set((s) => ({
       selectedSerials: s.selectedSerials.includes(serial)
         ? s.selectedSerials.filter((x) => x !== serial)
+        : [...s.selectedSerials, serial]
+    })),
+
+  selectSerial: (serial) =>
+    set((s) => ({
+      selectedSerials: s.selectedSerials.includes(serial)
+        ? s.selectedSerials
         : [...s.selectedSerials, serial]
     })),
 

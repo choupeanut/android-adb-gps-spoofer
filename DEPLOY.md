@@ -1,55 +1,51 @@
 # Web Version Deployment Guide
 
-## Quick Deploy to Portainer
+This file is the short deployment checklist. For a deeper deployment explanation, see `docs/deployment.md`.
 
-### 1. Configure Portainer Settings
+## Runtime Summary
 
-Copy `.env.deploy.example` to `.env.deploy.local` and set your Portainer details:
+- Container runtime: Node.js 20 Alpine
+- Server: Express + WebSocket
+- Container port: `3000`
+- Default host port: `3001` (`3000` is reserved for the existing CISSP site)
+- Persistent data path: `/data`
+- Android tooling: Alpine `android-tools` package, including `adb`
+- USB ADB requirement: privileged container plus `/dev/bus/usb` mount
 
-```bash
-cp .env.deploy.example .env.deploy.local
-```
-
-Then edit `.env.deploy.local`:
-
-```bash
-PORTAINER_TOKEN=ptr_your_token_here
-PORTAINER_URL=https://your-portainer-url.com
-PORTAINER_ENDPOINT_ID=1
-STACK_NAME=android-adb-gps-spoofer
-```
-
-### 2. Build & Deploy
+## Build Image
 
 ```bash
-# Build the Docker image
 ./build-web.sh
-
-# Deploy to Portainer
-./deploy-portainer.sh
 ```
 
-## Manual Deployment
+The script builds `android-adb-gps-spoofer:latest`, adds a timestamp tag, and saves a tar archive under `dist/docker/`.
 
-### Option 1: Direct Docker Run
+Manual build:
+
+```bash
+docker build -t android-adb-gps-spoofer:latest .
+```
+
+## Direct Docker Run
 
 ```bash
 docker run -d \
   --name android-adb-gps-spoofer \
+  --restart unless-stopped \
   --privileged \
-  -p 3000:3000 \
+  -p 3001:3000 \
   -v /dev/bus/usb:/dev/bus/usb \
   -v gps-spoofer-data:/data \
+  -e PORT=3000 \
+  -e DATA_DIR=/data \
   android-adb-gps-spoofer:latest
 ```
 
-### Option 2: Docker Compose
+Open `http://<host-ip>:3001`.
 
-Create `docker-compose.yml`:
+## Docker Compose
 
 ```yaml
-version: '3.8'
-
 services:
   gps-spoofer:
     image: android-adb-gps-spoofer:latest
@@ -57,67 +53,75 @@ services:
     restart: unless-stopped
     privileged: true
     ports:
-      - "3000:3000"
+      - "3001:3000"
     volumes:
       - /dev/bus/usb:/dev/bus/usb
       - gps-spoofer-data:/data
     environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - DATA_DIR=/data
+      NODE_ENV: production
+      PORT: "3000"
+      DATA_DIR: /data
 
 volumes:
   gps-spoofer-data:
 ```
 
-Then run:
+Start:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
-### Option 3: Load from Tar File
+## Portainer Deployment
 
-Transfer the tar file to your server:
+1. Copy the example env file:
+
+```bash
+cp .env.deploy.example .env.deploy.local
+```
+
+2. Edit `.env.deploy.local`:
+
+```bash
+PORTAINER_TOKEN=ptr_your_token_here
+PORTAINER_URL=https://portainer.example.com
+PORTAINER_ENDPOINT_ID=1
+STACK_NAME=android-adb-gps-spoofer
+```
+
+3. Build and deploy:
+
+```bash
+./build-web.sh
+./deploy-portainer.sh
+```
+
+The deploy script can build the image on the Portainer endpoint, stop the old `pikmin-keep-web` stack, copy `pikmin-data` into `gps-spoofer-data`, and create/update the `android-adb-gps-spoofer` stack.
+
+## Load From Tar
 
 ```bash
 scp dist/docker/android-adb-gps-spoofer-latest.tar user@server:/tmp/
-```
-
-On the server:
-
-```bash
+ssh user@server
 docker load < /tmp/android-adb-gps-spoofer-latest.tar
-docker run -d --name android-adb-gps-spoofer --privileged -p 3000:3000 -v /dev/bus/usb:/dev/bus/usb android-adb-gps-spoofer:latest
+docker run -d --name android-adb-gps-spoofer --privileged -p 3001:3000 \
+  -v /dev/bus/usb:/dev/bus/usb \
+  -v gps-spoofer-data:/data \
+  android-adb-gps-spoofer:latest
 ```
 
-## Access the App
+## Operations
 
-After deployment, access the web interface at:
-- Local: http://localhost:3000
-- Remote: http://your-server-ip:3000
-
-## Troubleshooting
-
-### Check logs
 ```bash
 docker logs android-adb-gps-spoofer
-```
-
-### Verify ADB access
-```bash
 docker exec android-adb-gps-spoofer adb devices
-```
-
-### Restart container
-```bash
 docker restart android-adb-gps-spoofer
+docker exec android-adb-gps-spoofer ls -la /data
 ```
 
 ## Security Notes
 
-- Use `.env.deploy.local` for sensitive tokens
-- `.env.deploy*` is git-ignored except `.env.deploy.example`
-- Never commit tokens to version control
-- Use environment variables for production secrets
-- Restrict network access to port 3000 if needed
+- Keep `.env.deploy.local` out of version control.
+- Restrict the exposed host port, default `3001`, to trusted LAN/VPN clients.
+- Do not expose the UI publicly unless you add authentication and TLS at a reverse proxy.
+- `--privileged` is required for common USB ADB setups but increases container privileges; prefer LAN-only hosts.

@@ -41,6 +41,22 @@ export interface SavedLocation {
   createdAt: string
 }
 
+export interface WifiIpHistoryEntry {
+  ip: string
+  port: number
+  useCount: number
+  lastUsedAt: string
+}
+
+export interface TileProviderConfig {
+  id: string
+  label: string
+  url: string
+  attribution: string
+  maxZoom?: number
+  subdomains?: string
+}
+
 export interface RouteWaypoint {
   lat: number
   lng: number

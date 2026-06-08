@@ -1,235 +1,255 @@
-# Pikmin Keep — Project Overview
+# Android ADB GPS Spoofer — Repository Analysis
 
-**Pikmin Keep** is a GPS location spoofing application for Android devices via ADB. It supports two deployment modes: an **Electron desktop app** and a **standalone web server** (Docker-based). Both let Pokémon GO / Pikmin Bloom players control their Android device's GPS from a browser or desktop, with teleport, joystick movement, waypoint routing, and anti-cheat features.
+## Executive Summary
 
-## Dual Architecture
+This repo is a mature dual-runtime TypeScript application for Android GPS test-provider control over ADB. The same React control UI is used in two environments:
 
-### Mode 1: Electron Desktop App (Original)
+1. **Electron desktop app** with IPC and an optional embedded LAN web server.
+2. **Standalone Docker web server** with Express, REST fallback, and WebSocket command/event transport.
 
-```
-┌─────────────┐     IPC (invoke/handle)     ┌──────────────┐
-│  Renderer    │ ◄─────────────────────────► │  Main Process│
-│  (React UI)  │     Events (send/on)        │  (Node.js)   │
-└──────┬───────┘                             └──────┬───────┘
-       │ contextBridge                              │ child_process
-┌──────┴───────┐                             ┌──────┴───────┐
-│   Preload    │                             │  ADB Binary  │
-└──────────────┘                             └──────────────┘
-```
+The core product surface is operational rather than informational: connect Android devices, set up the `gps` test provider, push spoofed coordinates, run joystick or routes, and keep provider state alive aggressively enough to reduce jump-back to real GPS.
 
-### Mode 2: Standalone Web Server (Docker)
+The main maintenance risk is duplicated runtime service code between `src/main/services/` and `web/server/services/`. The main correctness risk is lifecycle handling around ADB disconnects, route pause/stop handoff, and real GPS readback while a mock provider is active.
 
-```
-┌───────────────┐     WebSocket / REST       ┌──────────────┐
-│  Browser UI   │ ◄─────────────────────────►│  Express +   │
-│  (React SPA)  │     (same React code)      │  WS Server   │
-│ phone/desktop │                            │  (Node.js)   │
-└───────────────┘                            └──────┬───────┘
-       │ window.api (web-api.ts adapter)            │ child_process
-       │                                     ┌──────┴───────┐
-       │                                     │  ADB Binary  │
-       │                                     │ (in Docker)  │
-       └─────────────────────────────────────└──────────────┘
+## Runtime Architecture
+
+### Electron Desktop
+
+```text
+React renderer
+  -> window.api from src/preload/index.ts
+  -> ipcRenderer.invoke(channel, args)
+  -> src/main/ipc/register.ts
+  -> services
+  -> adb child_process
+
+services
+  -> src/main/services/broadcast.ts
+  -> BrowserWindow events
+  -> embedded LAN WebSocket clients
 ```
 
-The web build reuses the **same React renderer code**. `web/client/web-api.ts` provides a `window.api` object that routes all calls over WebSocket/REST instead of Electron IPC.
+`src/main/server/index.ts` serves the built renderer and exposes a WebSocket command surface for LAN access from the desktop runtime. Default port is `3388`.
+
+### Standalone Web
+
+```text
+Browser
+  -> web/client/web-api.ts
+  -> WebSocket /ws, fallback POST /api/call
+  -> web/server/index.ts handler registry
+  -> web/server/services
+  -> adb child_process
+
+services
+  -> web/server/broadcast.ts
+  -> WebSocket events
+```
+
+The standalone server also exposes:
+
+- `POST /api/gpx/parse`
+- `GET /api/version`
+- `GET /api/client-ip`
 
 ## Project Layout
 
-```
+```text
 src/
-├── main/                        # Electron main process (Node.js)
-│   ├── index.ts                 # App entry: BrowserWindow, Tray, DeviceManager init
-│   ├── logger.ts                # In-memory ring buffer; broadcasts log-entry
-│   ├── ipc/
-│   │   ├── register.ts          # All ipcMain.handle() registrations
-│   │   └── gpx.ipc.ts           # Electron dialog → GPX file parse
-│   ├── services/
-│   │   ├── adb.service.ts       # All ADB shell commands
-│   │   ├── anti-detect.ts       # Jitter, speed fluctuation, bearing smoothing
-│   │   ├── device-manager.ts    # ADB polling every 3s
-│   │   ├── device-engine-manager.ts # Per-device LocationEngine + RouteEngine
-│   │   ├── location-engine.ts   # Teleport, joystick keep-alive, graceful stop
-│   │   ├── route-engine.ts      # Waypoint routing, pause/resume, wander, return-to-GPS
-│   │   └── db.ts                # SQLite (better-sqlite3) saved locations + history
-│   └── utils/
-│       ├── coordinates.ts       # haversine, bearing, interpolation, destinationPoint
-│       └── cooldown.ts          # Cooldown time calculation
-│
-├── preload/
-│   └── index.ts                 # contextBridge → window.api
-│
-├── renderer/                    # React SPA (shared by Electron + Web)
-│   ├── App.tsx                  # IPC subscriptions, responsive layout
-│   ├── main.tsx                 # ReactDOM entry
-│   ├── hooks/
-│   │   └── useBreakpoint.ts     # mobile / tablet / desktop breakpoints
-│   ├── stores/
-│   │   ├── device.store.ts      # devices[], activeDevice, selectedSerials
-│   │   ├── location.store.ts    # location, mode, realGpsLocation, pendingTeleport
-│   │   ├── route.store.ts       # waypoints, playing, speedMs, wanderEnabled
-│   │   ├── ui.store.ts          # activeTab, mapClickMode
-│   │   └── log.store.ts         # LogEntry ring buffer (last 500)
-│   ├── components/
-│   │   ├── TopBar.tsx           # Device selector, speed pills, Stop All, Add Device
-│   │   ├── StopAllModal.tsx     # Stay / Graceful / Immediate stop dialog
-│   │   ├── controls/
-│   │   │   ├── TeleportPanel.tsx
-│   │   │   ├── Joystick.tsx
-│   │   │   ├── RoutePanel.tsx
-│   │   │   ├── SpeedControl.tsx
-│   │   │   └── CooldownTimer.tsx
-│   │   ├── device/
-│   │   │   ├── DeviceList.tsx
-│   │   │   ├── DeviceCard.tsx
-│   │   │   └── ConnectionDialog.tsx  # WiFi ADB connection wizard + auto LAN IP
-│   │   ├── map/
-│   │   │   ├── MapView.tsx
-│   │   │   └── RouteOverlay.tsx
-│   │   ├── panels/
-│   │   │   ├── LeftPanel.tsx    # Desktop: Teleport + Joystick
-│   │   │   ├── RightPanel.tsx   # Desktop: Route + Logs/Devices
-│   │   │   └── BottomSheet.tsx  # Mobile: swipeable sheet with tab switcher
-│   │   └── sidebar/
-│   │       ├── SavedLocations.tsx
-│   │       ├── LocationHistory.tsx
-│   │       └── LogPanel.tsx
-│   └── styles/globals.css
-│
-├── shared/                      # Used by both main and renderer
-│   ├── types.ts
-│   ├── constants.ts
-│   └── geo.ts
-│
-web/                             # Standalone web deployment (Docker)
-├── client/
-│   ├── index.html               # Web entry HTML
-│   ├── main-web.ts              # Loads web-api then renderer/main
-│   └── web-api.ts               # window.api via WebSocket + REST
-├── server/
-│   ├── index.ts                 # Express + WebSocket server
-│   ├── broadcast.ts             # WS-only event broadcast (no Electron)
-│   ├── logger.ts                # Standalone logger
-│   └── services/                # Electron-free copies of all services
-│       ├── adb.service.ts
-│       ├── anti-detect.ts
-│       ├── coordinates.ts
-│       ├── db.ts
-│       ├── device-manager.ts
-│       ├── device-engine-manager.ts
-│       ├── location-engine.ts
-│       └── route-engine.ts
-└── package.json                 # Production deps for Docker
+  main/
+    index.ts                    Electron bootstrap
+    ipc/register.ts             IPC handlers and embedded-web handler registration
+    ipc/gpx.ipc.ts              Desktop GPX file import
+    server/index.ts             Embedded HTTP + WebSocket LAN server
+    services/
+      adb.service.ts            ADB diagnostics, setup, push, real GPS readback
+      anti-detect.ts            jitter, speed variation, bearing smoothing
+      broadcast.ts              event fan-out
+      db.ts                     desktop SQLite
+      device-manager.ts         ADB polling
+      device-engine-manager.ts  per-device engine lifecycle
+      location-engine.ts        teleport, joystick, graceful stop
+      route-engine.ts           route playback, loop, wander, return, watchdog
+      route-planner.ts          OSRM road-network planner
+    utils/
+      coordinates.ts
+      cooldown.ts
+  preload/
+    index.ts                    Electron contextBridge API
+  renderer/
+    App.tsx                     subscriptions, session hydration, responsive layout
+    components/                 map, controls, devices, panels, UI primitives
+    stores/                     Zustand stores
+    styles/globals.css          design tokens
+  shared/
+    constants.ts                speed/update/cooldown constants
+    types.ts                    shared TypeScript contracts
+    geo.ts                      renderer-safe geo helpers
+
+web/
+  server/
+    index.ts                    Express + WebSocket server
+    services/                   Electron-free service copies
+  client/
+    web-api.ts                  browser window.api adapter
+    main-web.ts
+    index.html
+
+tests/
+  unit/
+  integration/
 ```
 
-## Key Services
+## Core Services
 
 | Service | Role |
 |---|---|
-| **AdbService** | ADB shell commands — list devices, push GPS, read real location. Handles Android 6–16 format differences (4 parse strategies + fallback). |
-| **DeviceManager** | Polls `adb devices` every 3s, broadcasts changes. |
-| **DeviceEngineManager** | Maintains per-device `{ LocationEngine, RouteEngine }` pairs. Lazy creation, auto-cleanup on disconnect. |
-| **LocationEngine** | Teleport (instant or glide ≤1km), joystick keep-alive, graceful stop. |
-| **RouteEngine** | Waypoint routing with play/pause/resume, wander mode, loop, return-to-real-GPS. Ticks at 1Hz. |
-| **AntiDetect** | Gaussian jitter (σ=10m), ±15% speed fluctuation, 30% bearing smoothing. |
-| **DB** | SQLite for saved locations & location history. |
+| `AdbService` | Resolves ADB path, lists devices, tests connection, enables mock location, pushes coordinates, reads real location, manages Wi-Fi ADB |
+| `DeviceManager` | Polls `adb devices -l` every 3 seconds and broadcasts changes |
+| `DeviceEngineManager` | Creates and prunes per-device location/route engines |
+| `LocationEngine` | Teleport, short glide, joystick keep-alive, graceful stop |
+| `RouteEngine` | Route playback, pause/resume, loop, wander, fixed speed, return-to-GPS, stale-push watchdog |
+| `RoutePlannerService` | Calls OSRM and converts control points into routed waypoints |
+| `Database` | Saved locations, 100-entry history, session persistence |
+| `broadcast` | Runtime-specific fan-out to renderer or WebSocket clients |
 
-## UI Layout
+## ADB Command Model
 
-### Desktop (≥1024px)
+Setup flow:
 
-```
-┌──────────────────────────────────────────────────────────┐
-│ TopBar: [Device ▼][+Add] [Walk Cycle Drive HSR Plane] [⏹]│
-├───────────┬──────────────────────────┬───────────────────┤
-│ Teleport  │                          │   Route Panel     │
-│  Panel    │     Map (Leaflet)        │                   │
-├───────────┤                          ├───────────────────┤
-│ Joystick  │                          │  Logs / Devices   │
-└───────────┴──────────────────────────┴───────────────────┘
+```text
+appops set com.android.shell android:mock_location allow
+cmd location providers add-test-provider gps
+cmd location providers set-test-provider-enabled gps true
 ```
 
-### Mobile (<768px)
+Push flow:
 
-```
-┌───────────────────────┐
-│ TopBar: [Device▾][⏹]  │
-├───────────────────────┤
-│   Map (full width)    │
-├───────────────────────┤
-│ [Teleport][Move][Route]│  ← swipeable BottomSheet
-│  Active tab content    │    drag handle to minimize
-└───────────────────────┘
+```text
+cmd location providers set-test-provider-location gps --location LAT,LNG --accuracy N --time T
 ```
 
-## State Management (Zustand)
+Fallback push flow:
+
+```text
+cmd location providers set-test-provider-location gps LAT,LNG
+```
+
+Real GPS readback defaults to network-provider-only parsing because `gps`, `fused`, and `passive` can be contaminated once the test provider is active. `ALLOW_CONTAMINATED_REAL_GPS=1` enables fallback parsing for diagnostics.
+
+## Location and Route Behavior
+
+| Behavior | Implementation |
+|---|---|
+| Teleport | Immediate push unless existing mock location is within 1 km |
+| Teleport glide | Walk-speed glide using 500 ms updates |
+| Teleport hold | Primary keep-alive every 500 ms plus backup every 1000 ms |
+| Joystick | Position updates at 500 ms, speed from TopBar |
+| Route playback | Interpolates between waypoints every 500 ms |
+| Route start glide | Glides to first waypoint if start position is within 500 m |
+| Route pause | Stops route timer but keeps provider alive |
+| Route stop | Removes test provider and restores experimental master location if needed |
+| Route stop stay | Transfers current route position into location keep-alive |
+| Wander | Random target inside configured radius after route end |
+| Return to GPS | Walks from current mock position to known real GPS, then cleans up |
+
+## Shared Constants
+
+| Constant | Value |
+|---|---:|
+| `UPDATE_INTERVAL_MS` | `500` |
+| `ADB_POLL_INTERVAL_MS` | `3000` |
+| `DEFAULT_ACCURACY` | `10` |
+| Walk | `1.4 m/s` |
+| Cycle | `5.14 m/s` |
+| Drive | `11.0 m/s` |
+| HSR | `83.3 m/s` |
+| Plane | `250.0 m/s` |
+
+## State Management
+
+Zustand stores:
 
 | Store | Key state |
 |---|---|
-| `device.store` | `devices[]`, `activeDevice`, `selectedSerials`, `getTargetSerials()` |
-| `location.store` | `location`, `mode`, `realGpsLocation`, `pendingTeleport`, `allDeviceLocations` |
-| `route.store` | `waypoints[]`, `playing`, `wandering`, `speedMs`, `wanderEnabled`, `returnOnFinish` |
-| `ui.store` | `activeTab`, `mapClickMode` |
-| `log.store` | `entries[]` (last 500) |
+| `device.store` | devices, active device, selected serials, target serial resolution |
+| `location.store` | current mock location, mode, real GPS, pending teleport, all-device real locations |
+| `route.store` | waypoints, control points, route mode/profile, speed, fixed speed, loop, wander, return flags |
+| `ui.store` | active tab and panel state |
+| `log.store` | last 500 log entries |
 
-## Communication Protocol
+Session persistence is handled through `get-session` / `save-session` and SQLite.
 
-### Electron Mode (IPC)
-```
-window.api.teleport(serials, lat, lng)
-  → ipcRenderer.invoke → ipcMain.handle → LocationEngine.teleport()
-  → BrowserWindow.send('location-updated', data)
-```
+## UI Analysis
 
-### Web Mode (WebSocket + REST)
-```
-window.api.teleport(serials, lat, lng)
-  → ws.send({ id, channel: 'teleport', args: [serials, lat, lng] })
-  → Express handler → LocationEngine.teleport()
-  → ws.send({ type: 'event', channel: 'location-updated', data })
-```
+The current UI is map-first:
 
-Four push event channels: `devices-changed`, `location-updated`, `route-updated`, `log-entry`
+- `TopBar` handles device selection, multi-select, speed presets, shortcuts, version, and Stop All.
+- Device selection includes Select All/Clear and Add Device auto-selects newly connected devices.
+- Desktop uses floating control panels instead of a static three-column layout.
+- Mobile/tablet use a bottom sheet.
+- Route controls support manual and road-network modes.
+- Device status is reflected through compact colored dots.
+- Add Device records successful Wi-Fi IPs locally and in SQLite for quick reconnect buttons.
+- Map tiles are configurable: CARTO, OSM local labels, or a custom tile URL with attribution.
 
-## Anti-Cheat Measures
+The UI is dense and appropriate for an operational tool. The main design constraint is avoiding hidden critical controls on mobile, especially Stop All and device selection.
 
-- **GPS jitter**: Gaussian noise (σ=0.00009°, ~10m) — 95% within ±20m
-- **Speed fluctuation**: ±15% random variation on movement speed
-- **Bearing smoothing**: 30% interpolation per tick (no instant direction changes)
-- **Cooldown timer**: Warns before teleporting long distances per Pokémon GO cooldown table
-- **Speed presets**: Walk 1.4 m/s, Cycle 4.2 m/s, Drive 11.0 m/s, HSR 83.3 m/s, Plane 250 m/s
+## Build and Distribution
 
-## Tech Stack
+Desktop:
 
-| Layer | Technology |
-|---|---|
-| Desktop App | Electron 33, electron-vite |
-| Web Server | Express 4, ws (WebSocket) |
-| UI | React 19, TypeScript, Tailwind CSS v3, Zustand |
-| Map | react-leaflet (OpenStreetMap tiles) |
-| Icons | lucide-react |
-| Database | better-sqlite3 (SQLite) |
-| ADB | Android Debug Bridge via child_process |
-| Build | esbuild (server bundle), Vite (client), Docker |
-| Deployment | Docker (node:20-alpine + android-tools), Portainer |
-
-## Build & Distribution
-
-### Electron Desktop
 ```bash
-pnpm dev          # Dev mode (hot reload)
-pnpm build        # Build → out/
-pnpm dist:win     # Windows NSIS installer → dist/
-pnpm dist:linux   # Linux AppImage → dist/
+pnpm dev
+pnpm build
+pnpm dist:win
+pnpm dist:linux
+pnpm dist:mac
 ```
 
-### Web (Docker)
+Web:
+
 ```bash
-node build-server.cjs                      # Bundle server → dist/server/index.js
-npx vite build --config vite.web.config.ts # Build client → dist/client/
-docker build -t pikmin-keep-web .          # Multi-stage Docker build
+node build-server.cjs
+npx vite build --config vite.web.config.ts
+docker build -t android-adb-gps-spoofer:latest .
 ```
 
-See `docs/deployment.md` for full Docker/Portainer deployment instructions.
+Electron app ID:
 
-App ID: `com.pikminkeep`
+```text
+com.peanutchou.android-adb-gps-spoofer
+```
+
+## Test Coverage
+
+Current tests include:
+
+- anti-detect behavior
+- cooldown calculations
+- coordinate helpers
+- device engine manager
+- route planner
+- WebSocket integration
+
+Notable gaps:
+
+- renderer interaction tests
+- full route lifecycle with mocked ADB failures
+- Wi-Fi disconnect/reconnect recovery
+- parity tests between `src/main/services` and `web/server/services`
+
+## Maintenance Risks
+
+1. **Duplicated service trees**: Electron and web services are similar but not generated from a single source. Changes should be mirrored and tested.
+2. **ADB version variance**: Android command syntax and location dumps differ across versions. Keep fallback parsing conservative.
+3. **Real GPS trust**: Only `network` provider is trusted by default. UI behavior that requires real GPS should handle `null`.
+4. **Provider cleanup**: Stop, return, disconnect, and shutdown paths must remove test providers unless the user explicitly chose stay.
+5. **Public exposure risk**: Web UI controls connected devices and should stay on trusted LAN/VPN unless authentication is added.
+
+## Recommended Next Work
+
+- Add parity tests for Electron/web service behavior.
+- Add mocked ADB integration tests for route stop, stop-stay, graceful stop, and disconnect cleanup.
+- Consider extracting shared service logic to reduce duplicated files.
+- Rename SQLite file from `pikmin-keep.db` only with a migration plan, because existing installs depend on it.

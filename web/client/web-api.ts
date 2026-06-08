@@ -204,6 +204,9 @@ const api = {
   getLocationHistory: () => wsInvoke('locations-get-history'),
   addLocationHistory: (lat: number, lng: number) =>
     wsInvoke('locations-add-history', lat, lng),
+  getWifiIpHistory: () => wsInvoke('wifi-ip-history-get'),
+  recordWifiIp: (ip: string, port: number) => wsInvoke('wifi-ip-history-record', ip, port),
+  deleteWifiIpHistory: (ip: string, port: number) => wsInvoke('wifi-ip-history-delete', ip, port),
 
   // Events
   onDevicesChanged: (cb: EventCallback) => onEvent('devices-changed', cb),

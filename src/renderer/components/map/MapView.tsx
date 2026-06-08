@@ -1,15 +1,55 @@
-import { useEffect, useRef } from 'react'
-import { RefreshCw, Navigation, Route, Crosshair, MapPin } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { RefreshCw, Navigation, Route, Crosshair, MapPin, Layers } from 'lucide-react'
 import { MapContainer, TileLayer, Marker, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import type { Map as LeafletMap } from 'leaflet'
+import type { TileProviderConfig } from '@shared/types'
 import { useLocationStore } from '../../stores/location.store'
 import { useDeviceStore } from '../../stores/device.store'
 import { useRouteStore } from '../../stores/route.store'
 import { useUiStore, type MapClickMode } from '../../stores/ui.store'
 import { RouteOverlay } from './RouteOverlay'
-import { SegmentedControl, type SegmentedControlOption } from '../ui/SegmentedControl'
+import { SegmentedControl } from '../ui/SegmentedControl'
 import { Button } from '../ui/Button'
+
+const TILE_PROVIDER_STORAGE_KEY = 'gps-spoofer:tile-provider'
+
+const BUILTIN_TILE_PROVIDERS: TileProviderConfig[] = [
+  {
+    id: 'carto-voyager',
+    label: 'CARTO Voyager',
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 20
+  },
+  {
+    id: 'osm-local',
+    label: 'OSM Local Labels',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    subdomains: 'abc',
+    maxZoom: 19
+  }
+]
+
+const DEFAULT_TILE_PROVIDER = BUILTIN_TILE_PROVIDERS[0]
+
+function readTileProviderFromLocalStorage(): TileProviderConfig | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(TILE_PROVIDER_STORAGE_KEY) ?? 'null')
+    if (!parsed || typeof parsed !== 'object') return null
+    if (typeof parsed.url !== 'string' || typeof parsed.label !== 'string') return null
+    if (typeof parsed.attribution !== 'string') return null
+    return parsed as TileProviderConfig
+  } catch {
+    return null
+  }
+}
+
+function writeTileProviderToLocalStorage(provider: TileProviderConfig): void {
+  localStorage.setItem(TILE_PROVIDER_STORAGE_KEY, JSON.stringify(provider))
+}
 
 // Direction arrow — rotated by bearing
 function createLocationIcon(bearingDeg: number): L.DivIcon {
@@ -78,23 +118,11 @@ function AutoPanToRealGps(): null {
 function MapClickHandler(): null {
   const mapClickMode = useUiStore((s) => s.mapClickMode)
   const addControlPoint = useRouteStore((s) => s.addControlPoint)
-  const setLoop = useRouteStore((s) => s.setLoop)
   const setPendingTeleport = useLocationStore((s) => s.setPendingTeleport)
 
   useMapEvents({
     click: (e) => {
       if (mapClickMode === 'route') {
-        const controlPoints = useRouteStore.getState().controlPoints
-        // Snap-to-close: if ≥2 points and click within 50m of first, enable loop
-        if (controlPoints.length >= 2) {
-          const first = controlPoints[0]
-          const distM = e.latlng.distanceTo(L.latLng(first.lat, first.lng))
-          if (distM <= 50) {
-            setLoop(true)
-            window.api.routeSetLoop(true)
-            return
-          }
-        }
         addControlPoint({ lat: e.latlng.lat, lng: e.latlng.lng })
       } else if (mapClickMode === 'teleport') {
         setPendingTeleport({ lat: e.latlng.lat, lng: e.latlng.lng })
@@ -107,6 +135,7 @@ function MapClickHandler(): null {
 
 export function MapView(): JSX.Element {
   const mapRef = useRef<LeafletMap | null>(null)
+  const tileMenuRef = useRef<HTMLDivElement>(null)
 
   const location = useLocationStore((s) => s.location)
   const realGpsLocation = useLocationStore((s) => s.realGpsLocation)
@@ -118,6 +147,67 @@ export function MapView(): JSX.Element {
   const activeDevice = useDeviceStore((s) => s.activeDevice)
   const devices = useDeviceStore((s) => s.devices)
   const setRealGpsLocation = useLocationStore((s) => s.setRealGpsLocation)
+  const [tileProvider, setTileProvider] = useState<TileProviderConfig>(DEFAULT_TILE_PROVIDER)
+  const [showTileMenu, setShowTileMenu] = useState(false)
+  const [customTileUrl, setCustomTileUrl] = useState('')
+  const [customAttribution, setCustomAttribution] = useState('')
+
+  useEffect(() => {
+    const localProvider = readTileProviderFromLocalStorage()
+    if (localProvider) {
+      setTileProvider(localProvider)
+      if (localProvider.id === 'custom') {
+        setCustomTileUrl(localProvider.url)
+        setCustomAttribution(localProvider.attribution)
+      }
+    }
+
+    ;(window.api.getSession() as Promise<any>).then((session: any) => {
+      const sessionProvider = session?.tileProvider
+      if (
+        sessionProvider &&
+        typeof sessionProvider.url === 'string' &&
+        typeof sessionProvider.label === 'string' &&
+        typeof sessionProvider.attribution === 'string'
+      ) {
+        setTileProvider(sessionProvider)
+        writeTileProviderToLocalStorage(sessionProvider)
+        if (sessionProvider.id === 'custom') {
+          setCustomTileUrl(sessionProvider.url)
+          setCustomAttribution(sessionProvider.attribution)
+        }
+      }
+    }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent): void => {
+      if (tileMenuRef.current && !tileMenuRef.current.contains(e.target as Node)) {
+        setShowTileMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  const applyTileProvider = (provider: TileProviderConfig): void => {
+    setTileProvider(provider)
+    writeTileProviderToLocalStorage(provider)
+    window.api.saveSession({ tileProvider: provider }).catch(() => {})
+    setShowTileMenu(false)
+  }
+
+  const applyCustomTileProvider = (): void => {
+    const url = customTileUrl.trim()
+    if (!url) return
+    applyTileProvider({
+      id: 'custom',
+      label: 'Custom',
+      url,
+      attribution: customAttribution.trim() || 'Custom tile provider',
+      maxZoom: 20
+    })
+  }
 
   const showBearing = mode === 'route' || mode === 'joystick'
   const showSpeed = (mode === 'route' || mode === 'joystick') && location != null && location.speed > 0.05
@@ -144,10 +234,11 @@ export function MapView(): JSX.Element {
     <div className="h-full w-full relative">
       <MapContainer center={[25.033, 121.565]} zoom={13} className="h-full w-full z-0">
         <TileLayer
-          attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-          subdomains="abcd"
-          maxZoom={20}
+          key={`${tileProvider.id}:${tileProvider.url}`}
+          attribution={tileProvider.attribution}
+          url={tileProvider.url}
+          subdomains={tileProvider.subdomains}
+          maxZoom={tileProvider.maxZoom ?? 20}
         />
 
         <MapRefGrabber mapRef={mapRef} />
@@ -210,6 +301,70 @@ export function MapView(): JSX.Element {
             onChange={(value) => setMapClickMode(value as MapClickMode)}
           />
         </div>
+      </div>
+
+      {/* Tile provider selector */}
+      <div className="absolute top-4 right-4 z-[5]" ref={tileMenuRef}>
+        <Button
+          variant="icon"
+          onClick={() => setShowTileMenu((v) => !v)}
+          title="Map tile provider"
+          aria-label="Map tile provider"
+          className="glass w-10 h-10 shadow-elevation-md"
+        >
+          <Layers size={18} />
+        </Button>
+        {showTileMenu && (
+          <div className="absolute top-12 right-0 w-72 glass-light rounded-[var(--radius-md)] shadow-elevation-lg p-3 space-y-3">
+            <div>
+              <p className="text-xs font-semibold text-foreground mb-2">Map Tiles</p>
+              <div className="space-y-1">
+                {BUILTIN_TILE_PROVIDERS.map((provider) => (
+                  <button
+                    key={provider.id}
+                    onClick={() => applyTileProvider(provider)}
+                    className={`w-full text-left px-2 py-1.5 rounded-[var(--radius-xs)] text-xs transition-colors ${
+                      tileProvider.id === provider.id
+                        ? 'bg-primary/20 text-primary'
+                        : 'text-foreground-secondary hover:bg-surface-hover/50 hover:text-foreground'
+                    }`}
+                  >
+                    {provider.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="border-t border-border pt-3 space-y-2">
+              <p className="text-xs font-semibold text-foreground">Custom URL</p>
+              <input
+                type="text"
+                value={customTileUrl}
+                onChange={(e) => setCustomTileUrl(e.target.value)}
+                placeholder="https://{s}.example.com/{z}/{x}/{y}.png"
+                className="w-full px-2 py-1.5 text-xs bg-input border border-border rounded-[var(--radius-xs)] text-foreground placeholder:text-foreground-muted"
+              />
+              <input
+                type="text"
+                value={customAttribution}
+                onChange={(e) => setCustomAttribution(e.target.value)}
+                placeholder="Attribution"
+                className="w-full px-2 py-1.5 text-xs bg-input border border-border rounded-[var(--radius-xs)] text-foreground placeholder:text-foreground-muted"
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={applyCustomTileProvider}
+                disabled={!customTileUrl.trim()}
+                className="w-full justify-center"
+              >
+                Apply Custom
+              </Button>
+              <p className="text-[10px] text-foreground-muted">
+                For Chinese labels, use a provider URL that supports localized tiles and its required attribution.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Zoom-to buttons — right edge of map, above joystick */}

@@ -29,6 +29,8 @@ export function TopBar(): JSX.Element {
   const selectedSerials = useDeviceStore((s) => s.selectedSerials)
   const selectDevice = useDeviceStore((s) => s.selectDevice)
   const toggleSelectSerial = useDeviceStore((s) => s.toggleSelectSerial)
+  const selectAll = useDeviceStore((s) => s.selectAll)
+  const clearSelection = useDeviceStore((s) => s.clearSelection)
   const mode = useLocationStore((s) => s.mode)
 
   const speedMs = useRouteStore((s) => s.speedMs)
@@ -131,6 +133,23 @@ export function TopBar(): JSX.Element {
 
           {showDeviceDropdown && (
             <div className="absolute top-full mt-1 left-0 w-64 bg-surface border border-border rounded-[var(--radius-md)] shadow-elevation-lg py-1 z-[1200]">
+              {availableDevices.some((d) => d.status === 'connected') && (
+                <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border">
+                  <button
+                    onClick={selectAll}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    onClick={clearSelection}
+                    disabled={selectedCount === 0}
+                    className="text-xs text-foreground-muted hover:text-foreground disabled:opacity-40 disabled:hover:text-foreground-muted"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
               {availableDevices.length === 0 && (
                 <p className="px-3 py-2 text-xs text-foreground-muted">No devices connected</p>
               )}

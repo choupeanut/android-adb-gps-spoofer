@@ -1,7 +1,11 @@
-# Pikmin Keep Android — Shizuku GPS Spoofer Design
+# Android ADB GPS Spoofer — Shizuku Android App Design
+
+> Status: future-product design note, not implemented in this repository.
+> This repo currently ships Electron and Docker web runtimes only. The Shizuku/Jetpack Compose app described here is a separate Android-app concept.
+> Historical name note: older drafts used "Pikmin Keep"; the current repo/product name is "Android ADB GPS Spoofer".
 
 **Date**: 2026-04-05  
-**Status**: Approved  
+**Status**: Approved concept / not in current codebase
 **Type**: New Android App (Standalone Repository)
 
 ---
@@ -339,7 +343,7 @@ App Launch
 4. Return to Shizuku → Tap "Pairing"
 5. Enter pairing code from Settings
 6. Shizuku shows "Started via wireless debugging"
-7. Return to Pikmin Keep → Grant permission
+7. Return to Android ADB GPS Spoofer → Grant permission
 
 ### Command Execution Pattern
 
@@ -634,7 +638,7 @@ fun shizukuShell_mockLocationCommand_correctSyntax() = runTest {
 
 ## References
 
-- **Pikmin Keep Web**: `/home/peanutchou/pricer/pikmin-keep`
+- **Android ADB GPS Spoofer Web**: `/home/peanutchou/pricer/android-adb-gps-spoofer`
 - **Code Review**: `docs/codex-5.3-review.md` (W1-W7 fixes applied in Web version)
 - **Shizuku Docs**: https://shizuku.rikka.app/guide/
 - **OSMDroid Wiki**: https://github.com/osmdroid/osmdroid/wiki

@@ -1,5 +1,9 @@
 # GPS Spoofing Android App — 技術規格文件
 
+> 狀態：歷史/探索規格，不是目前此 repo 的實作。
+> 目前 repo 是 Electron + Docker Web，透過電腦或伺服器上的 ADB 控制 Android `cmd location` test provider；尚未實作「手機端獨立 APP 內嵌 ADB client」。
+> 本文件保留作為 Android standalone 方向的早期技術研究，和現行程式可能不一致。
+
 ## 專案目標
 
 開發一個 Android APP，能在**不依賴外部電腦**的情況下，透過本機 ADB 連線執行 GPS Spoofing（`geo fix`），且注入的座標**不會觸發 `isFromMockProvider` flag**，可繞過其他 APP 的 Mock Location 偵測機制。

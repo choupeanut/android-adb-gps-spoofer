@@ -1,5 +1,9 @@
 # Niantic / Pokemon GO Mock GPS 偵測原理深度分析
 
+> 狀態：風險研究文件，保留作為 spoofing 風險背景。
+> 這不是保證可繞過偵測的指南。現行 repo 使用 Android `cmd location` test provider，仍可能被 App 或服務端偵測。
+> 歷史名稱說明：早期草稿使用「Pikmin Keep」名稱；目前名稱是「Android ADB GPS Spoofer」。
+
 **研究日期：** 2026-04-04  
 **研究範圍：** Android 平台 Mock Location 偵測機制  
 **目標應用：** Pokemon GO, Pikmin Bloom, Ingress (Niantic 遊戲)
@@ -12,7 +16,7 @@
 2. [Android Mock Location 機制](#android-mock-location-機制)
 3. [Niantic 多層偵測架構](#niantic-多層偵測架構)
 4. [偵測技術詳解](#偵測技術詳解)
-5. [Pikmin Keep 的風險評估](#pikmin-keep-的風險評估)
+5. [Android ADB GPS Spoofer 的風險評估](#pikmin-keep-的風險評估)
 6. [對抗與反對抗技術](#對抗與反對抗技術)
 7. [結論與建議](#結論與建議)
 
@@ -24,7 +28,7 @@ Niantic 是 AR 遊戲領域的領導者，其反作弊系統以多層檢測和�
 
 ### 核心問題
 
-**Pikmin Keep 使用的 ADB test provider 方法會被偵測嗎？**
+**Android ADB GPS Spoofer 使用的 ADB test provider 方法會被偵測嗎？**
 
 **答案：是的。** 100% 會被偵測到，因為 Android Location API 設計上就提供了明確的偵測方法。
 
@@ -252,14 +256,14 @@ Niantic 使用 **Play Integrity API**（SafetyNet 的繼任者）進行設備完
 
 #### 4.2.2 風險指標
 
-| Verdict | 含義 | Pikmin Keep 影響 |
+| Verdict | 含義 | Android ADB GPS Spoofer 影響 |
 |---------|------|------------------|
 | `MEETS_DEVICE_INTEGRITY` | 設備通過完整性檢查 | ✅ USB ADB 不影響 |
 | `MEETS_BASIC_INTEGRITY` | 基本完整性（可能 Root） | ⚠️ 若 Root 會失敗 |
 | `MEETS_STRONG_INTEGRITY` | 強完整性（硬體認證） | ⚠️ WiFi ADB 可能降級 |
 | `NO_INTEGRITY` | 完全失敗 | ❌ Root + Xposed 必定失敗 |
 
-**Pikmin Keep 使用 ADB 本身不會觸發 Play Integrity 失敗**，但如果設備已 Root 會失敗。
+**Android ADB GPS Spoofer 使用 ADB 本身不會觸發 Play Integrity 失敗**，但如果設備已 Root 會失敗。
 
 ### 4.3 第三層：Server-Side 行為分析
 
@@ -358,7 +362,7 @@ val cellInfo = telephonyManager.allCellInfo
 // 3. 基站切換模式是否自然
 ```
 
-**Pikmin Keep 的問題：**  
+**Android ADB GPS Spoofer 的問題：**
 使用 ADB 改 GPS 時，**基站資訊不變**，造成明顯矛盾：
 - GPS 顯示在台北 101
 - Cellular Tower 在新北市板橋
@@ -404,7 +408,7 @@ class SensorFusionValidator {
 }
 ```
 
-**Pikmin Keep 的盲點：**  
+**Android ADB GPS Spoofer 的盲點：**
 只改 GPS，其他感測器維持真實值 → **極易被 Sensor Fusion 偵測**。
 
 ### 4.6 第六層：Game-Specific 異常偵測
@@ -441,7 +445,7 @@ class GameplayAnomalyDetector:
 
 ---
 
-## Pikmin Keep 的風險評估
+## Android ADB GPS Spoofer 的風險評估
 
 ### 5.1 偵測層級分析
 
@@ -457,7 +461,7 @@ class GameplayAnomalyDetector:
 ### 5.2 ADB Test Provider 的技術限制
 
 ```bash
-# Pikmin Keep 使用的指令
+# Android ADB GPS Spoofer 使用的指令
 adb shell cmd location providers add-test-provider gps
 adb shell cmd location providers set-test-provider-location gps \
     --location 25.0330,121.5654 \
@@ -588,7 +592,7 @@ class HumanLikeMovement:
 
 ### 7.1 技術結論
 
-1. **Pikmin Keep 的 ADB 方法會被偵測**  
+1. **Android ADB GPS Spoofer 的 ADB 方法會被偵測**
    ✅ 100% 會被 `isMock()` 偵測  
    ✅ 高機率被行為分析偵測  
    ⚠️ Play Integrity 不直接偵測（除非 Root）
@@ -634,7 +638,7 @@ class HumanLikeMovement:
 
 | 方案 | Mock Flag | Root 需求 | 風險等級 | 推薦度 |
 |------|-----------|-----------|---------|--------|
-| **Pikmin Keep (現況)** | ✅ 會標記 | ❌ 不需要 | 🟡 中 | ⭐⭐⭐ 測試用 |
+| **Android ADB GPS Spoofer (現況)** | ✅ 會標記 | ❌ 不需要 | 🟡 中 | ⭐⭐⭐ 測試用 |
 | **Root + Xposed** | ❌ 可繞過 | ✅ 需要 | 🔴 極高 | ⭐ 不推薦 |
 | **iOS 越獄 + Location Faker** | ⚠️ 部分 | ✅ 需要 | 🔴 高 | ⭐⭐ 不穩定 |
 | **實體移動** | ❌ 無 | ❌ 不需要 | 🟢 無 | ⭐⭐⭐⭐⭐ 最安全 |
@@ -653,7 +657,7 @@ Niantic 的偵測系統會持續進化：
 
 ### 7.4 最終建議
 
-**對於 Pikmin Keep 使用者：**
+**對於 Android ADB GPS Spoofer 使用者：**
 
 1. **理解風險**  
    ✅ 知道自己被偵測的可能性 100%  

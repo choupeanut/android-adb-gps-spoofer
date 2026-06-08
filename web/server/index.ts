@@ -304,6 +304,11 @@ handle('locations-save', (name: string, lat: number, lng: number) => db.addSaved
 handle('locations-delete', (id: number) => { db.deleteSavedLocation(id); return true })
 handle('locations-add-history', (lat: number, lng: number) => { db.addHistory(lat, lng); return true })
 
+// Wi-Fi IP history
+handle('wifi-ip-history-get', () => db.getWifiIpHistory())
+handle('wifi-ip-history-record', (ip: string, port: number) => db.recordWifiIp(ip, port))
+handle('wifi-ip-history-delete', (ip: string, port: number) => { db.deleteWifiIp(ip, port); return true })
+
 // Session
 handle('get-session', () => db.getSession())
 handle('save-session', (data: Record<string, unknown>) => {

@@ -4,7 +4,7 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { join } from 'path'
 import { mkdirSync } from 'fs'
-import type { SavedLocation } from '@shared/types'
+import type { SavedLocation, WifiIpHistoryEntry } from '@shared/types'
 
 const MAX_HISTORY = 100
 
@@ -37,6 +37,13 @@ export class Database {
       CREATE TABLE IF NOT EXISTS session (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS wifi_ip_history (
+        ip TEXT NOT NULL,
+        port INTEGER NOT NULL,
+        use_count INTEGER NOT NULL DEFAULT 1,
+        last_used_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (ip, port)
       );
     `)
   }
@@ -73,5 +80,36 @@ export class Database {
   addHistory(lat: number, lng: number): void {
     this.db.prepare('INSERT INTO location_history (lat, lng) VALUES (?, ?)').run(lat, lng)
     this.db.prepare('DELETE FROM location_history WHERE id NOT IN (SELECT id FROM location_history ORDER BY visited_at DESC LIMIT ?)').run(MAX_HISTORY)
+  }
+
+  getWifiIpHistory(): WifiIpHistoryEntry[] {
+    return this.db
+      .prepare(`
+        SELECT ip, port, use_count as useCount, last_used_at as lastUsedAt
+        FROM wifi_ip_history
+        ORDER BY use_count DESC, last_used_at DESC
+        LIMIT 20
+      `)
+      .all() as WifiIpHistoryEntry[]
+  }
+
+  recordWifiIp(ip: string, port: number): WifiIpHistoryEntry[] {
+    const cleanIp = ip.trim()
+    const cleanPort = Number.isFinite(port) ? port : 5555
+    if (!cleanIp) return this.getWifiIpHistory()
+
+    this.db.prepare(`
+      INSERT INTO wifi_ip_history (ip, port, use_count, last_used_at)
+      VALUES (?, ?, 1, datetime('now'))
+      ON CONFLICT(ip, port) DO UPDATE SET
+        use_count = use_count + 1,
+        last_used_at = datetime('now')
+    `).run(cleanIp, cleanPort)
+
+    return this.getWifiIpHistory()
+  }
+
+  deleteWifiIp(ip: string, port: number): void {
+    this.db.prepare('DELETE FROM wifi_ip_history WHERE ip = ? AND port = ?').run(ip.trim(), port)
   }
 }

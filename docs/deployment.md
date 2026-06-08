@@ -2,244 +2,238 @@
 
 ## Overview
 
-Android ADB GPS Spoofer can be deployed as a **standalone Docker container** on any machine with Docker and ADB access (e.g., a NAS with USB-connected Android devices, or a Linux server). The container runs an Express + WebSocket server that serves the React UI and communicates with Android devices via ADB.
+The standalone web version runs the same core spoofing services without Electron. It serves the React UI, exposes REST and WebSocket APIs, and talks to Android devices through ADB.
 
----
+```text
+Browser UI  ->  HTTP / WebSocket  ->  Docker container
+                                      Express + ws
+                                      ADB child_process
+                                      SQLite at DATA_DIR
 
-## Architecture
-
-```
-┌──────────────────┐     HTTP / WebSocket      ┌───────────────────┐
-│  Phone Browser   │ ◄────────────────────────► │  Docker Container │
-│  (any device on  │    port 3001 (LAN)         │  pikmin-keep-web  │
-│   same LAN)      │                            │                   │
-└──────────────────┘                            │  ┌─────────────┐  │
-                                                │  │ Express +WS │  │
-┌──────────────────┐     USB / WiFi ADB         │  │ (Node.js)   │  │
-│  Android Phone   │ ◄────────────────────────► │  ├─────────────┤  │
-│  (target device) │    adb commands            │  │ android-tools│  │
-└──────────────────┘                            │  └─────────────┘  │
-                                                │  Volume: /data    │
-                                                │  (SQLite DB)      │
-                                                └───────────────────┘
+Android target device  <->  USB ADB or Wi-Fi ADB  <->  container adb
 ```
 
----
+Default URL: `http://<host-ip>:3001`. The container listens on `3000`; host port `3000` is reserved for the existing CISSP site and must not be used by this stack.
+
+## What Gets Built
+
+| File | Role |
+|---|---|
+| `Dockerfile` | Multi-stage Node 20 Alpine build and runtime image |
+| `build-server.cjs` | Bundles `web/server/index.ts` into `dist/server/index.js` |
+| `vite.web.config.ts` | Builds browser assets into `dist/client/` |
+| `web/package.json` | Runtime dependencies for the container |
+| `web/server/index.ts` | Express API, static serving, WebSocket server at `/ws` |
+| `web/client/web-api.ts` | Browser-side `window.api` adapter |
+
+## Server Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/call` | REST fallback for registered command handlers |
+| `POST /api/gpx/parse` | Parse GPX content and return waypoints |
+| `GET /api/version` | Return `APP_VERSION` or `dev` |
+| `GET /api/client-ip` | Return detected client IP for Wi-Fi ADB setup |
+| `GET /ws` | WebSocket command/response and push events |
+
+WebSocket messages use:
+
+```json
+{ "id": "1", "channel": "teleport", "args": [["SERIAL"], 25.0, 121.5] }
+```
+
+Server responses use `type: "response"`, and push events use `type: "event"` with channels such as `devices-changed`, `location-updated`, `route-updated`, and `log-entry`.
 
 ## Prerequisites
 
-- Docker Engine (20.x+) on the host machine
-- `android-tools` / ADB accessible from the host (included in Docker image)
-- Android device(s) with **Developer Options** enabled
-  - **USB debugging** ON
-  - **Mock location app** set (or will be set via ADB)
-- Host machine and phone browser on the **same LAN**
+- Docker Engine on the host
+- Android device with developer options and USB debugging enabled
+- A data-capable USB cable for USB ADB or initial Wi-Fi ADB setup
+- LAN access from browser clients to the Docker host
 
----
+For USB ADB inside the container, use:
 
-## Files Involved
+- `--privileged`
+- `/dev/bus/usb:/dev/bus/usb`
 
-| File | Purpose |
-|---|---|
-| `Dockerfile` | Multi-stage build: node:20-alpine builder + runtime |
-| `build-server.cjs` | esbuild script — bundles `web/server/index.ts` → single CJS file |
-| `vite.web.config.ts` | Vite config — builds client from `web/client/` entry |
-| `web/package.json` | Production dependencies for Docker runtime stage |
-| `web/server/` | Standalone server (Express + WS, no Electron deps) |
-| `web/client/` | Browser entry: `web-api.ts` adapter + `main-web.ts` + `index.html` |
+For Wi-Fi ADB only, USB passthrough is not required after `adb tcpip 5555` has been enabled.
 
----
-
-## Build Docker Image
-
-### Option A: Build locally
+## Build
 
 ```bash
-# From project root
-docker build -t pikmin-keep-web:latest .
+docker build -t android-adb-gps-spoofer:latest .
 ```
 
-### Option B: Build on remote Docker host (via Portainer API)
+Or use the helper:
 
 ```bash
-# Create tar of build context
-tar czf /tmp/pikmin-build-context.tar.gz \
-  Dockerfile package.json pnpm-lock.yaml pnpm-workspace.yaml \
-  tailwind.config.js postcss.config.js vite.web.config.ts build-server.cjs \
-  src/shared/ src/renderer/ web/
-
-# Build via Portainer Docker build API
-curl -X POST \
-  'https://<PORTAINER_HOST>/api/endpoints/<ENDPOINT_ID>/docker/build?t=pikmin-keep-web:latest&dockerfile=Dockerfile' \
-  -H 'X-API-Key: <API_TOKEN>' \
-  -H 'Content-Type: application/x-tar' \
-  --data-binary @/tmp/pikmin-build-context.tar.gz
+./build-web.sh
 ```
 
-### What the Dockerfile does
+The helper also writes `dist/docker/android-adb-gps-spoofer-latest.tar`.
 
-1. **Stage 1 (builder)**: Installs pnpm + build tools, runs `node build-server.cjs` (esbuild → `dist/server/index.js`) and `npx vite build --config vite.web.config.ts` (→ `dist/client/`)
-2. **Stage 2 (runtime)**: Minimal node:20-alpine with `android-tools` (provides `adb`), copies built artifacts + production node_modules
+## Run With Docker
 
----
+```bash
+docker run -d \
+  --name android-adb-gps-spoofer \
+  --restart unless-stopped \
+  --privileged \
+  -p 3001:3000 \
+  -v /dev/bus/usb:/dev/bus/usb \
+  -v gps-spoofer-data:/data \
+  -e PORT=3000 \
+  -e DATA_DIR=/data \
+  android-adb-gps-spoofer:latest
+```
 
-## Deploy with Docker Compose
-
-### docker-compose.yml
+## Run With Docker Compose
 
 ```yaml
 services:
-  pikmin-keep-web:
-    image: pikmin-keep-web:latest
-    container_name: pikmin-keep-web
+  gps-spoofer:
+    image: android-adb-gps-spoofer:latest
+    container_name: android-adb-gps-spoofer
     restart: unless-stopped
-    environment:
-      - PORT=3001
-      - DATA_DIR=/data
+    privileged: true
+    ports:
+      - "3001:3000"
     volumes:
-      - pikmin-data:/data
-    network_mode: host    # Required for ADB device access
+      - /dev/bus/usb:/dev/bus/usb
+      - gps-spoofer-data:/data
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATA_DIR: /data
 
 volumes:
-  pikmin-data:
-    driver: local
+  gps-spoofer-data:
 ```
-
-### Start
 
 ```bash
 docker compose up -d
 ```
 
-The app is now available at `http://<HOST_IP>:3001`.
+## Portainer
 
----
-
-## Deploy with Portainer
-
-1. **Build the image** (Option B above, or push to a registry)
-2. **Create a Stack** in Portainer:
-   - Name: `pikmin-keep-web`
-   - Paste the docker-compose.yml above
-   - Deploy
-3. **Update an existing stack**:
-   - Rebuild the image (via API or CLI)
-   - Stop stack → Start stack (Portainer API or UI)
-
-### Portainer API commands
+The repo includes a helper that creates or updates a Portainer stack.
 
 ```bash
-# Stop stack
-curl -X POST 'https://<PORTAINER>/api/stacks/<STACK_ID>/stop?endpointId=<EP_ID>' \
-  -H 'X-API-Key: <TOKEN>'
-
-# Start stack
-curl -X POST 'https://<PORTAINER>/api/stacks/<STACK_ID>/start?endpointId=<EP_ID>' \
-  -H 'X-API-Key: <TOKEN>'
+cp .env.deploy.example .env.deploy.local
 ```
 
----
+Edit `.env.deploy.local`:
+
+```bash
+PORTAINER_TOKEN=ptr_your_token_here
+PORTAINER_URL=https://portainer.example.com
+PORTAINER_ENDPOINT_ID=3
+STACK_NAME=android-adb-gps-spoofer
+OLD_STACK_NAME=pikmin-keep-web
+DATA_VOLUME=gps-spoofer-data
+OLD_DATA_VOLUME=pikmin-data
+APP_PORT=3001
+REMOTE_BUILD=1
+MIGRATE_OLD_STACK=1
+```
+
+Then run:
+
+```bash
+./build-web.sh
+./deploy-portainer.sh
+```
+
+The helper-generated stack uses:
+
+- image `android-adb-gps-spoofer:latest`
+- container `android-adb-gps-spoofer`
+- port `3001:3000`
+- volume `gps-spoofer-data:/data`
+- USB passthrough and privileged mode
+
+When `MIGRATE_OLD_STACK=1`, the helper stops the old `pikmin-keep-web` stack, copies `pikmin-data` into `gps-spoofer-data`, then deploys the new stack. The old stack is left in Portainer for rollback/reference.
 
 ## Environment Variables
 
 | Variable | Default | Description |
-|---|---|---|
-| `PORT` | `3000` | HTTP server port |
-| `DATA_DIR` | `/data` | SQLite database storage directory |
-| `NODE_ENV` | `production` | Node environment |
+|---|---:|---|
+| `PORT` | `3000` | Container HTTP and WebSocket port |
+| `APP_PORT` | `3001` | Host port used by Portainer deployment scripts |
+| `DATA_DIR` | `/data` in Docker | SQLite database directory |
+| `APP_VERSION` | `dev` | Version returned by `/api/version` |
+| `ADB_PATH` | unset | Override `adb` binary path |
+| `ALLOW_CONTAMINATED_REAL_GPS` | `0` | Allow fallback GPS providers for diagnostics |
+| `EXPERIMENTAL_DISABLE_REAL_GPS_ON_FAKE` | `0` | Best-effort system location disable while spoofing |
 
----
+## Android Connection
 
-## Current Production Deployment
+### USB
 
-| Property | Value |
-|---|---|
-| Host | Synology NAS (amd64) |
-| Portainer | `https://portainer.choupeanut.synology.me` |
-| Endpoint ID | 3 |
-| Stack ID | 43 |
-| Stack name | `pikmin-keep-web` |
-| Container | `pikmin-keep-web` |
-| Port | 3001 (via `network_mode: host`) |
-| Data volume | `pikmin-data` → `/data` |
-
----
-
-## Connecting Android Devices
-
-### USB (direct)
-1. Connect Android device to the Docker host via USB
-2. Device should appear automatically via `adb devices` inside the container
-3. In the web UI, click the device selector (top-left) → device should be listed
-
-### WiFi ADB
-1. Open the web UI on your phone browser: `http://<HOST_IP>:3001`
-2. Click device selector → **+ Add Device**
-3. The phone's LAN IP will be auto-detected and pre-filled (via `/api/client-ip`)
-4. If the device was previously set up with `adb tcpip 5555`, enter IP and click Connect
-5. Or use "USB → Wi-Fi setup" to enable TCP/IP mode from an already USB-connected device
-
----
-
-## Rebuild & Redeploy Workflow
-
-Quick reference for updating the deployed app:
+1. Connect the target Android device to the Docker host.
+2. Accept the USB debugging RSA prompt on the phone.
+3. Check device visibility:
 
 ```bash
-# 1. Make code changes locally
-
-# 2. Test locally
-node build-server.cjs
-npx vite build --config vite.web.config.ts
-
-# 3. Create build context tar
-tar czf /tmp/pikmin-build-context.tar.gz \
-  Dockerfile package.json pnpm-lock.yaml pnpm-workspace.yaml \
-  tailwind.config.js postcss.config.js vite.web.config.ts build-server.cjs \
-  src/shared/ src/renderer/ web/
-
-# 4. Build image on NAS via Portainer API
-python3 -c "
-import urllib.request
-with open('/tmp/pikmin-build-context.tar.gz', 'rb') as f:
-    data = f.read()
-req = urllib.request.Request(
-    'https://portainer.choupeanut.synology.me/api/endpoints/3/docker/build?t=pikmin-keep-web:latest&dockerfile=Dockerfile',
-    data=data, method='POST',
-    headers={'X-API-Key': '<TOKEN>', 'Content-Type': 'application/x-tar'})
-resp = urllib.request.urlopen(req, timeout=600)
-print(resp.read().decode()[-200:])
-"
-
-# 5. Restart stack
-curl -X POST 'https://portainer.choupeanut.synology.me/api/stacks/43/stop?endpointId=3' \
-  -H 'X-API-Key: <TOKEN>'
-curl -X POST 'https://portainer.choupeanut.synology.me/api/stacks/43/start?endpointId=3' \
-  -H 'X-API-Key: <TOKEN>'
+docker exec android-adb-gps-spoofer adb devices
 ```
 
----
+4. Open the UI and click **Setup GPS** on the device card.
+
+### Wi-Fi ADB
+
+1. Connect by USB once.
+2. In the UI, choose **Add Device -> USB -> Wi-Fi setup**, or run `adb tcpip 5555`.
+3. Enter the phone LAN IP and port `5555`.
+4. If the phone reboots, repeat the USB `tcpip` step.
+
+## Data Persistence
+
+The web database is stored at:
+
+```text
+${DATA_DIR}/pikmin-keep.db
+```
+
+It contains saved locations, last 100 history entries, and session settings.
 
 ## Troubleshooting
 
-### Container starts but no devices found
-- `network_mode: host` is required for USB ADB access
-- Check `adb devices` works on the Docker host
-- Verify USB cable supports data transfer (not charge-only)
+**No devices found**
 
-### Phone browser can't connect
-- Ensure phone and host are on the same LAN/subnet
-- Check firewall allows the configured PORT
-- Try `http://<HOST_IP>:<PORT>` (not HTTPS)
+```bash
+docker exec android-adb-gps-spoofer adb devices -l
+```
 
-### SQLite errors on startup
-- The `DATA_DIR` volume must be writable
-- Check volume mount permissions: `docker exec pikmin-keep-web ls -la /data`
+- Confirm USB debugging is enabled.
+- Confirm the RSA prompt was accepted.
+- Confirm `--privileged` and `/dev/bus/usb` are present.
+- Try Wi-Fi ADB if the host cannot pass USB devices to Docker.
 
-### "Add Device" shows wrong IP
-- The auto-detected IP comes from the HTTP connection's `remoteAddress`
-- If behind a reverse proxy, ensure `X-Forwarded-For` header is passed
-- `network_mode: host` avoids this issue (direct connection)
+**Web UI cannot connect**
 
-### Mobile UI scrolls / top bar disappears
-- Hard-refresh the browser (clear cache) — the CSS includes `position: fixed` on html/body and `100dvh` viewport units to prevent mobile browser chrome issues
+- Confirm the container is listening: `docker logs android-adb-gps-spoofer`
+- Confirm firewall rules allow the configured host port, default `3001`.
+- Use `http://<host-ip>:3001`, not `https`, unless a reverse proxy is configured.
+
+**SQLite or session data is missing**
+
+- Confirm `/data` is mounted and writable:
+
+```bash
+docker exec android-adb-gps-spoofer ls -la /data
+```
+
+**Wi-Fi ADB is unstable**
+
+- Keep the phone and host on the same LAN.
+- Avoid phone Wi-Fi sleep.
+- Re-run `adb tcpip 5555` after reboot.
+- The app applies best-effort Wi-Fi hardening on setup, but TCP ADB can still drop.
+
+## Security
+
+- Treat the UI as a privileged control surface for connected Android devices.
+- Keep it on a trusted LAN or VPN.
+- Add authentication and TLS at a reverse proxy before exposing it beyond a trusted network.
+- Avoid committing `.env.deploy.local` or API tokens.

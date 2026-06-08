@@ -128,6 +128,63 @@ jobs:
           name: linux-appimage
           path: dist/*.AppImage
 
+  # ── Desktop builds (Electron — macOS DMG/ZIP) ───────────────────────
+  build-mac:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Inject version into package.json
+        run: npm pkg set version=${{ steps.version.outputs.VERSION }}
+
+      - name: Prepare macOS build resources
+        run: |
+          ./scripts/generate-mac-icon.sh
+          ./scripts/download-mac-adb.sh
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build & package (DMG + ZIP)
+        run: pnpm dist:mac
+        env:
+          # First macOS release is an unsigned internal build.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Verify packaged ADB
+        run: |
+          ADB_PATH="dist/mac-universal/Android ADB GPS Spoofer.app/Contents/Resources/platform-tools/adb"
+          if [ ! -x "$ADB_PATH" ]; then
+            echo "Missing or non-executable packaged adb: $ADB_PATH" >&2
+            exit 1
+          fi
+          "$ADB_PATH" version
+
+      - name: List dist artifacts
+        run: ls -lh dist/*.dmg dist/*.zip
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal
+          path: |
+            dist/*.dmg
+            dist/*.zip
+
   # ── Web server Docker image ────────────────────────────────────────────
   build-docker:
     runs-on: ubuntu-latest
@@ -164,8 +221,8 @@ jobs:
 
   # ── Create GitHub Release ──────────────────────────────────────────────
   create-release:
-    needs: [build-desktop, build-linux, build-docker]
-    if: always() && needs.build-desktop.result == 'success' && needs.build-linux.result == 'success'
+    needs: [build-desktop, build-linux, build-mac, build-docker]
+    if: always() && needs.build-desktop.result == 'success' && needs.build-linux.result == 'success' && needs.build-mac.result == 'success'
     runs-on: ubuntu-latest
 
     steps:
@@ -193,6 +250,12 @@ jobs:
           name: linux-appimage
           path: release-assets
 
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-universal
+          path: release-assets
+
       - name: List release assets
         run: ls -lh release-assets/
 
@@ -213,6 +276,14 @@ jobs:
             | File | Description |
             |------|-------------|
             | `*.AppImage` | Linux AppImage — `chmod +x *.AppImage && ./Android*.AppImage` |
+
+            ### macOS Downloads
+            | File | Description |
+            |------|-------------|
+            | `*.dmg` | macOS Universal DMG for Apple Silicon and Intel Macs — unsigned internal build |
+            | `*.zip` | macOS Universal ZIP fallback — unsigned internal build |
+
+            Note: the first macOS build is not signed or notarized. If macOS Gatekeeper blocks launch, open it from Finder with Control-click -> Open and confirm the prompt.
 
             ### Docker (Web Server)
             ```bash
