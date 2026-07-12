@@ -121,6 +121,8 @@ docker run -d \
   -p 3001:3000 \
   -v /dev/bus/usb:/dev/bus/usb \
   -v gps-spoofer-data:/data \
+  -e WEB_AUTH_TOKEN=replace-with-a-long-random-token \
+  -e WEB_CORS_ORIGIN=http://192.168.1.10:3001 \
   android-adb-gps-spoofer:latest
 ```
 
@@ -152,6 +154,8 @@ Open `http://<host-ip>:3001`.
 | `ADB_PATH` | unset | Override the ADB binary path |
 | `PORT` | `3000` | Standalone web HTTP/WebSocket port |
 | `DATA_DIR` | `./data` locally, `/data` in Docker | SQLite/session/log storage directory |
+| `WEB_AUTH_TOKEN` | unset | Optional token required for `/api/*` and `/ws`; browser clients provide it as `?token=...` |
+| `WEB_CORS_ORIGIN` | unset | Optional single allowed browser origin; no CORS headers are emitted when unset |
 | `APP_VERSION` | `dev` | Version returned by `/api/version` |
 | `EXPERIMENTAL_DISABLE_REAL_GPS_ON_FAKE` | `0` | Best-effort master-location disable during spoofing |
 | `ALLOW_CONTAMINATED_REAL_GPS` | `0` | Allow non-network providers for real-GPS fallback diagnostics |
@@ -165,12 +169,12 @@ pnpm build
 pnpm test
 pnpm test:watch
 
-# Standalone web build
-node build-server.cjs
-npx vite build --config vite.web.config.ts
+# Standalone web build and local start
+pnpm build:web
+WEB_AUTH_TOKEN=replace-with-a-long-random-token PORT=3000 DATA_DIR=./data pnpm start:web
 
-# Run standalone web server locally
-PORT=3000 DATA_DIR=./data node dist/server/index.js
+# Open the browser client with the same token
+# http://localhost:3000/?token=replace-with-a-long-random-token
 ```
 
 ### Project Structure

@@ -72,6 +72,15 @@ Or use the helper:
 
 The helper also writes `dist/docker/android-adb-gps-spoofer-latest.tar`.
 
+## Run Locally
+
+```bash
+pnpm build:web
+WEB_AUTH_TOKEN=replace-with-a-long-random-token PORT=3000 DATA_DIR=./data pnpm start:web
+```
+
+Open `http://localhost:3000/?token=replace-with-a-long-random-token`. When calling the API directly, use `Authorization: Bearer <token>` instead.
+
 ## Run With Docker
 
 ```bash
@@ -84,6 +93,8 @@ docker run -d \
   -v gps-spoofer-data:/data \
   -e PORT=3000 \
   -e DATA_DIR=/data \
+  -e WEB_AUTH_TOKEN=replace-with-a-long-random-token \
+  -e WEB_CORS_ORIGIN=http://192.168.1.10:3001 \
   android-adb-gps-spoofer:latest
 ```
 
@@ -105,6 +116,8 @@ services:
       NODE_ENV: production
       PORT: "3000"
       DATA_DIR: /data
+      WEB_AUTH_TOKEN: replace-with-a-long-random-token
+      WEB_CORS_ORIGIN: http://192.168.1.10:3001
 
 volumes:
   gps-spoofer-data:
@@ -161,6 +174,8 @@ When `MIGRATE_OLD_STACK=1`, the helper stops the old `pikmin-keep-web` stack, co
 | `PORT` | `3000` | Container HTTP and WebSocket port |
 | `APP_PORT` | `3001` | Host port used by Portainer deployment scripts |
 | `DATA_DIR` | `/data` in Docker | SQLite database directory |
+| `WEB_AUTH_TOKEN` | unset | Optional token for `/api/*` and `/ws`. Browser clients use the `token` URL parameter; direct API clients can use `Authorization: Bearer <token>`. |
+| `WEB_CORS_ORIGIN` | unset | Optional exact browser origin allowed by CORS. No CORS headers are emitted when unset. |
 | `APP_VERSION` | `dev` | Version returned by `/api/version` |
 | `ADB_PATH` | unset | Override `adb` binary path |
 | `ALLOW_CONTAMINATED_REAL_GPS` | `0` | Allow fallback GPS providers for diagnostics |

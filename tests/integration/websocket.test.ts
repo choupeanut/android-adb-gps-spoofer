@@ -2,6 +2,10 @@ import { describe, it, expect, afterAll, beforeAll } from 'vitest'
 import { WebSocket } from 'ws'
 import { createServer, type Server } from 'http'
 import { WebSocketServer } from 'ws'
+import { execFileSync, spawn, type ChildProcess } from 'child_process'
+import { mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { registerHandler, getHandler } from '../../src/main/server/index'
 
 /**
@@ -13,6 +17,63 @@ import { registerHandler, getHandler } from '../../src/main/server/index'
 let httpServer: Server
 let wss: WebSocketServer
 let port: number
+let standaloneServer: ChildProcess
+let standalonePort: number
+let standaloneDataDir: string
+
+const projectRoot = join(__dirname, '../..')
+
+async function getAvailablePort(): Promise<number> {
+  const probe = createServer()
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
+  const address = probe.address() as { port: number }
+  await new Promise<void>((resolve, reject) => probe.close((err) => err ? reject(err) : resolve()))
+  return address.port
+}
+
+async function waitForStandaloneServer(): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${standalonePort}/api/version`, {
+        headers: { Authorization: 'Bearer test-token' }
+      })
+      if (response.ok) return
+    } catch {
+      // The server is still starting.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  throw new Error('Standalone web server did not start')
+}
+
+async function postStandaloneCall(token?: string, authorization?: string): Promise<Response> {
+  const query = token ? `?token=${encodeURIComponent(token)}` : ''
+  return fetch(`http://127.0.0.1:${standalonePort}/api/call${query}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authorization ? { Authorization: authorization } : {})
+    },
+    body: JSON.stringify({ channel: 'get-logs', args: [] })
+  })
+}
+
+function expectWebSocketRejected(token?: string): Promise<void> {
+  const query = token ? `?token=${encodeURIComponent(token)}` : ''
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${standalonePort}/ws${query}`)
+    ws.once('unexpected-response', (_request, response) => {
+      expect(response.statusCode).toBe(401)
+      response.resume()
+      resolve()
+    })
+    ws.once('open', () => {
+      ws.close()
+      reject(new Error('WebSocket connection unexpectedly opened'))
+    })
+    ws.once('error', reject)
+  })
+}
 
 function startTestServer(): Promise<number> {
   return new Promise((resolve) => {
@@ -88,11 +149,28 @@ beforeAll(async () => {
   })
 
   port = await startTestServer()
+
+  standalonePort = await getAvailablePort()
+  standaloneDataDir = mkdtempSync(join(tmpdir(), 'android-adb-gps-spoofer-auth-'))
+  execFileSync(process.execPath, ['build-server.cjs'], { cwd: projectRoot, stdio: 'pipe' })
+  standaloneServer = spawn(process.execPath, ['dist/server/index.js'], {
+    cwd: projectRoot,
+    env: {
+      ...process.env,
+      PORT: String(standalonePort),
+      DATA_DIR: standaloneDataDir,
+      WEB_AUTH_TOKEN: 'test-token'
+    },
+    stdio: 'ignore'
+  })
+  await waitForStandaloneServer()
 })
 
 afterAll(() => {
   wss?.close()
   httpServer?.close()
+  standaloneServer?.kill('SIGTERM')
+  rmSync(standaloneDataDir, { recursive: true, force: true })
 })
 
 describe('WebSocket integration', () => {
@@ -181,5 +259,30 @@ describe('WebSocket integration', () => {
     } finally {
       ws.close()
     }
+  })
+})
+
+describe('Standalone web authentication', () => {
+  it('rejects unauthenticated and wrong-token HTTP calls before the handler, while allowing Bearer auth', async () => {
+    const unauthenticated = await postStandaloneCall()
+    expect(unauthenticated.status).toBe(401)
+
+    const wrongToken = await postStandaloneCall('wrong-token')
+    expect(wrongToken.status).toBe(401)
+
+    const authorized = await postStandaloneCall(undefined, 'Bearer test-token')
+    expect(authorized.status).toBe(200)
+    expect(await authorized.json()).toMatchObject({ result: expect.any(Array) })
+  })
+
+  it('accepts the browser token URL parameter for REST calls', async () => {
+    const authorized = await postStandaloneCall('test-token')
+    expect(authorized.status).toBe(200)
+    expect(await authorized.json()).toMatchObject({ result: expect.any(Array) })
+  })
+
+  it('rejects missing and wrong WebSocket tokens before command execution', async () => {
+    await expectWebSocketRejected()
+    await expectWebSocketRejected('wrong-token')
   })
 })

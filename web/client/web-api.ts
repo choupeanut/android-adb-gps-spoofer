@@ -9,15 +9,23 @@ type EventCallback = (data: any) => void
 
 // ─── WebSocket connection ──────────────────────────────────────────────────
 const WS_PATH = '/ws'
+const webAuthToken = new URLSearchParams(location.search).get('token')
 let ws: WebSocket | null = null
 let wsReady = false
 let msgId = 0
 const pending = new Map<string, { resolve: (v: any) => void; reject: (e: any) => void }>()
 const eventListeners: Record<string, Set<EventCallback>> = {}
 
+function withAuthToken(path: string): string {
+  if (!webAuthToken) return path
+  const url = new URL(path, location.origin)
+  url.searchParams.set('token', webAuthToken)
+  return `${url.pathname}${url.search}`
+}
+
 function getWsUrl(): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${location.host}${WS_PATH}`
+  return `${proto}//${location.host}${withAuthToken(WS_PATH)}`
 }
 
 function connectWs(): void {
@@ -107,7 +115,7 @@ function wsInvoke(channel: string, ...args: any[]): Promise<any> {
 
 /** REST fallback. */
 async function restInvoke(channel: string, args: any[]): Promise<any> {
-  const res = await fetch('/api/call', {
+  const res = await fetch(withAuthToken('/api/call'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ channel, args })
@@ -177,7 +185,7 @@ const api = {
         if (!file) { resolve([]); return }
         const content = await file.text()
         try {
-          const res = await fetch('/api/gpx/parse', {
+          const res = await fetch(withAuthToken('/api/gpx/parse'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content })
@@ -224,7 +232,7 @@ const api = {
   // App version (web returns server-provided version via meta tag or env)
   getAppVersion: async (): Promise<string> => {
     try {
-      const res = await fetch('/api/version')
+      const res = await fetch(withAuthToken('/api/version'))
       const data = await res.json()
       return data.version || 'web'
     } catch {
@@ -235,7 +243,7 @@ const api = {
   // Client IP detection (web-only)
   getClientIp: async (): Promise<string | null> => {
     try {
-      const res = await fetch('/api/client-ip')
+      const res = await fetch(withAuthToken('/api/client-ip'))
       const data = await res.json()
       return data.ip || null
     } catch {

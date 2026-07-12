@@ -4,8 +4,8 @@
   "description": "Android ADB GPS Spoofer — Web edition (LAN server + browser client)",
   "private": true,
   "scripts": {
-    "build:server": "tsc -p tsconfig.web-server.json",
-    "build:client": "vite build --config vite.web.config.ts",
+    "build:server": "tsc -p ../tsconfig.web-server.json",
+    "build:client": "vite build --config ../vite.web.config.ts",
     "build": "npm run build:server && npm run build:client",
     "start": "node dist/server/index.js"
   },

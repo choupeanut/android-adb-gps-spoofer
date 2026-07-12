@@ -3,7 +3,7 @@
  * Express HTTP + WebSocket, no Electron dependencies.
  */
 import express from 'express'
-import { createServer } from 'http'
+import { createServer, type IncomingMessage } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
 import cors from 'cors'
 import { resolve, join } from 'path'
@@ -21,13 +21,29 @@ import type { RoutePlanRoadRequest, RouteWaypoint } from '@shared/types'
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10)
 const DATA_DIR = process.env.DATA_DIR ?? join(process.cwd(), 'data')
+const WEB_AUTH_TOKEN = process.env.WEB_AUTH_TOKEN
+const WEB_CORS_ORIGIN = process.env.WEB_CORS_ORIGIN
 mkdirSync(DATA_DIR, { recursive: true })
+
+function isAuthorized(request: Pick<IncomingMessage, 'headers' | 'url'>): boolean {
+  if (!WEB_AUTH_TOKEN) return true
+
+  const authorization = request.headers.authorization
+  if (authorization === `Bearer ${WEB_AUTH_TOKEN}`) return true
+
+  const token = new URL(request.url ?? '/', 'http://localhost').searchParams.get('token')
+  return token === WEB_AUTH_TOKEN
+}
 
 // ─── Services ──────────────────────────────────────────────────────────────
 const deviceManager = new DeviceManager()
 const engineManager = new DeviceEngineManager(deviceManager.adbService)
 const db = new Database()
 const routePlanner = new RoutePlannerService()
+
+if (!WEB_AUTH_TOKEN) {
+  log('warn', '[Server] WEB_AUTH_TOKEN is not configured; web API access is unauthenticated')
+}
 
 deviceManager.onDevicesChanged((connectedSerials) => {
   engineManager.pruneDisconnected(connectedSerials)
@@ -347,8 +363,15 @@ if (savedSession) {
 
 // ─── Express ──────────────────────────────────────────────────────────────
 const app = express()
-app.use(cors())
+app.use(cors(WEB_CORS_ORIGIN ? { origin: WEB_CORS_ORIGIN } : { origin: false }))
 app.use(express.json({ limit: '10mb' }))
+app.use('/api', (req, res, next) => {
+  if (isAuthorized(req)) {
+    next()
+    return
+  }
+  res.status(401).json({ error: 'Unauthorized' })
+})
 
 // REST API — wraps all registered handlers
 app.post('/api/call', async (req, res) => {
@@ -451,7 +474,17 @@ app.get('*', (_req, res) => {
 
 // ─── HTTP + WebSocket server ──────────────────────────────────────────────
 const server = createServer(app)
-const wss = new WebSocketServer({ server, path: '/ws' })
+const wss = new WebSocketServer({
+  server,
+  path: '/ws',
+  verifyClient: (info, done) => {
+    if (isAuthorized(info.req)) {
+      done(true)
+      return
+    }
+    done(false, 401, 'Unauthorized')
+  }
+})
 
 // Wire broadcast → WebSocket clients
 const clients = new Set<WebSocket>()
