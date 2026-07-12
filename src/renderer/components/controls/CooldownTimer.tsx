@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type JSX } from 'react'
 import { useLocationStore } from '../../stores/location.store'
 import { COOLDOWN_TABLE } from '@shared/constants'
 

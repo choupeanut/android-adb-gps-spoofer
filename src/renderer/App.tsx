@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, type JSX } from 'react'
 import { MapView } from './components/map/MapView'
 import { TopBar } from './components/TopBar'
 import { FloatingControlPanel } from './components/layout/FloatingControlPanel'
@@ -50,7 +50,6 @@ export default function App(): JSX.Element {
 
   const breakpoint = useBreakpoint()
   const isMobile = breakpoint === 'mobile'
-  const isTablet = breakpoint === 'tablet'
 
   // Debounced session save for client-only settings
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)

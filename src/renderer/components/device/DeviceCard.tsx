@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type JSX } from 'react'
 import { Plug, MapPin } from 'lucide-react'
 import type { DeviceInfo } from '@shared/types'
 import { Card } from '../ui/Card'
@@ -11,12 +11,6 @@ interface Props {
   isSelected: boolean
   onSelect: () => void
   onToggleSelect: () => void
-}
-
-const statusColors = {
-  connected: 'bg-green-500',
-  unauthorized: 'bg-yellow-500',
-  offline: 'bg-red-500'
 }
 
 const statusLabels = {

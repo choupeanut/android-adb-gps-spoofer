@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type JSX } from 'react'
 import { useDeviceStore } from '../../stores/device.store'
 import { DeviceCard } from './DeviceCard'
 import { ConnectionDialog } from './ConnectionDialog'

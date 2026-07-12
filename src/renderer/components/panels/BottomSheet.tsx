@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState } from 'react'
+import { useRef, useCallback, useState, type JSX } from 'react'
 import { Navigation, Route, ChevronUp } from 'lucide-react'
 import { TeleportPanel } from '../controls/TeleportPanel'
 import { Joystick } from '../controls/Joystick'

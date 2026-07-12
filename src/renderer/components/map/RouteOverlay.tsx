@@ -1,4 +1,5 @@
-import { Polyline, CircleMarker, Marker, Tooltip, Circle } from 'react-leaflet'
+import type { JSX } from 'react'
+import { Polyline, Marker, Tooltip, Circle } from 'react-leaflet'
 import L from 'leaflet'
 import { useRouteStore } from '../../stores/route.store'
 

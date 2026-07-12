@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, type JSX } from 'react'
 import { Play, Pause, CornerDownLeft, X, FileUp, Trash2, MapPin } from 'lucide-react'
 import { useRouteStore } from '../../stores/route.store'
 import { useDeviceStore } from '../../stores/device.store'

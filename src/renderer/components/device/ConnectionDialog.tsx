@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type JSX } from 'react'
 import { useDeviceStore } from '../../stores/device.store'
 import {
   mergeWifiIpHistory,

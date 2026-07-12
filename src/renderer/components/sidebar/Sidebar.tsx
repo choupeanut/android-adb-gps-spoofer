@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import { DeviceList } from '../device/DeviceList'
 import { Joystick } from '../controls/Joystick'
 import { RoutePanel } from '../controls/RoutePanel'
@@ -16,7 +17,6 @@ export function Sidebar(): JSX.Element {
   const setActiveTab = useUiStore((s) => s.setActiveTab)
   const mode = useLocationStore((s) => s.mode)
   const setMode = useLocationStore((s) => s.setMode)
-  const activeDevice = useDeviceStore((s) => s.activeDevice)
 
   const handleTabChange = (tab: Tab): void => {
     setActiveTab(tab)

@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import { X, MapPin, Footprints, Zap } from 'lucide-react'
 
 interface Props {

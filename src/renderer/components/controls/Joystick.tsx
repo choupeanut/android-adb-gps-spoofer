@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, type JSX } from 'react'
 import { useDeviceStore } from '../../stores/device.store'
 import { useLocationStore } from '../../stores/location.store'
 import { useRouteStore } from '../../stores/route.store'

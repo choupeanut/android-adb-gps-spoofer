@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type JSX } from 'react'
 import { useLogStore } from '../../stores/log.store'
 
 const levelStyle: Record<string, string> = {

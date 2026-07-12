@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import { TeleportPanel } from '../controls/TeleportPanel'
 import { Joystick } from '../controls/Joystick'
 

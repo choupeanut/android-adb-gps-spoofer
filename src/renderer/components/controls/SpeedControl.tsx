@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import { Footprints, Bike, Car, SlidersHorizontal } from 'lucide-react'
 import type { SpeedMode } from '@shared/types'
 import { SPEED_PRESETS } from '@shared/constants'

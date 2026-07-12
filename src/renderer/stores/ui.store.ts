@@ -4,7 +4,7 @@ import { create } from 'zustand'
 export type MapClickMode = 'teleport' | 'route'
 
 /** Mobile bottom-sheet tab. */
-export type Tab = 'teleport' | 'route'
+export type Tab = 'teleport' | 'joystick' | 'route' | 'tools' | 'logs'
 
 interface UiState {
   /** Mobile bottom-sheet tab. */

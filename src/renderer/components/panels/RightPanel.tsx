@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type JSX } from 'react'
 import { MonitorSmartphone, ScrollText } from 'lucide-react'
 import { RoutePanel } from '../controls/RoutePanel'
 import { DeviceList } from '../device/DeviceList'

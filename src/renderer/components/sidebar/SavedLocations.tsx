@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type JSX } from 'react'
 import { X } from 'lucide-react'
 import type { SavedLocation } from '@shared/types'
 

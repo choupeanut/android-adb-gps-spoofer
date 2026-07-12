@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, type JSX } from 'react'
 import {
   Square, ChevronDown, Footprints, Bike, Car, TrainFront, Plane, SlidersHorizontal, Check, HelpCircle, Plus
 } from 'lucide-react'

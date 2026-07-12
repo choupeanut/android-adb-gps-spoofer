@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Star, AlertTriangle, Footprints, Bike, Car, Plane, Search, Loader2 } from 'lucide-react'
+import { useState, useEffect, type JSX } from 'react'
+import { Star, AlertTriangle, Footprints, Bike, Car, Plane, Search } from 'lucide-react'
 import { useDeviceStore } from '../../stores/device.store'
 import { useLocationStore } from '../../stores/location.store'
 import { haversineKm, getCooldownMinutes } from '@shared/geo'
