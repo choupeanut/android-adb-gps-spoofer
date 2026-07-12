@@ -325,7 +325,7 @@ export class AdbService {
 
     // Add the GPS test provider (correct syntax: just the provider name)
     try {
-      const { stdout, stderr } = await execFileAsync(
+      const { stdout } = await execFileAsync(
         this.adbPath,
         ['-s', serial, 'shell', 'cmd', 'location', 'providers', 'add-test-provider', 'gps'],
         this.execOpts(5000)

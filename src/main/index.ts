@@ -8,6 +8,7 @@ import { startWebServer } from './server/index'
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let deviceManager: DeviceManager | null = null
+let isQuitting = false
 
 // Safe logging wrapper - never crash if logging fails
 function setupLogging(): void {
@@ -137,10 +138,6 @@ function createWindow(): void {
       console.error('Failed to load renderer:', errorCode, errorDescription)
     })
 
-    mainWindow.webContents.on('crashed', () => {
-      console.error('Renderer crashed!')
-    })
-
     mainWindow.webContents.on('console-message', (_, level, message) => {
       console.log(`[Renderer Console ${level}]:`, message)
     })
@@ -179,7 +176,7 @@ function createWindow(): void {
 
     // Minimize to tray instead of closing
     mainWindow.on('close', (e) => {
-      if (tray && !app.isQuitting) {
+      if (tray && !isQuitting) {
         e.preventDefault()
         mainWindow?.hide()
       }
@@ -207,13 +204,6 @@ function createWindow(): void {
   } catch (error) {
     console.error('Error creating window:', error)
     throw error
-  }
-}
-
-// Extend app with isQuitting flag
-declare module 'electron' {
-  interface App {
-    isQuitting?: boolean
   }
 }
 
@@ -261,7 +251,7 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
-  app.isQuitting = true
+  isQuitting = true
 })
 
 app.on('window-all-closed', () => {

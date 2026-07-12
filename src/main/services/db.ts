@@ -67,18 +67,20 @@ export class Database {
 
   getSavedLocations(): SavedLocation[] {
     if (!this.db) return []
-    const rows = this.db.prepare('SELECT * FROM saved_locations ORDER BY created_at DESC').all()
+    const rows = this.db.prepare(
+      'SELECT id, name, lat, lng, created_at AS createdAt FROM saved_locations ORDER BY created_at DESC'
+    ).all()
     return rows as SavedLocation[]
   }
 
   addSavedLocation(name: string, lat: number, lng: number): SavedLocation {
-    if (!this.db) return { id: -1, name, lat, lng, created_at: new Date().toISOString() }
+    if (!this.db) return { id: -1, name, lat, lng, createdAt: new Date().toISOString() }
     const stmt = this.db.prepare(
       'INSERT INTO saved_locations (name, lat, lng) VALUES (?, ?, ?)'
     )
     const result = stmt.run(name, lat, lng)
     return this.db
-      .prepare('SELECT * FROM saved_locations WHERE id = ?')
+      .prepare('SELECT id, name, lat, lng, created_at AS createdAt FROM saved_locations WHERE id = ?')
       .get(result.lastInsertRowid) as SavedLocation
   }
 
