@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
+const path = require('path')
+
 module.exports = {
-  content: ['./src/renderer/**/*.{js,ts,jsx,tsx,html}'],
+  content: [path.join(__dirname, 'src/renderer/**/*.{js,ts,jsx,tsx,html}')],
   theme: {
     extend: {
       colors: {
