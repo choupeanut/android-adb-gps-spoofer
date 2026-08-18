@@ -7,6 +7,7 @@ import { registerGpxHandlers } from './gpx.ipc'
 import { registerHandler } from '../server/index'
 import { getLogs, getLogDir } from '../logger'
 import { log } from '../logger'
+import { resolveGoogleMapsLink } from '@shared/google-maps-link'
 import type { RoutePlanRoadRequest, RouteWaypoint } from '@shared/types'
 
 /**
@@ -367,11 +368,18 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
 
   // ─── Saved locations ─────────────────────────────────────────────────────
 
+  handle('maps-resolve-link', (url: string) => resolveGoogleMapsLink(url))
+
   handle('locations-get-saved',   () => db.getSavedLocations())
   handle('locations-get-history', () => db.getHistory())
 
   handle('locations-save', (name: string, lat: number, lng: number) =>
     db.addSavedLocation(name, lat, lng))
+
+  handle('locations-rename', (id: number, name: string) =>
+    db.renameSavedLocation(id, name))
+
+  handle('locations-touch', (id: number) => db.touchSavedLocation(id))
 
   handle('locations-delete', (id: number) => {
     db.deleteSavedLocation(id)

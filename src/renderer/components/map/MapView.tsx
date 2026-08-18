@@ -115,6 +115,30 @@ function AutoPanToRealGps(): null {
   return null
 }
 
+/** Focus a newly selected pending destination without changing the spoofed location. */
+function AutoPanToPendingTeleport(): null {
+  const map = useMap()
+  const pendingTeleport = useLocationStore((state) => state.pendingTeleport)
+  const previousKeyRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!pendingTeleport) {
+      previousKeyRef.current = null
+      return
+    }
+    const key = `${pendingTeleport.lat.toFixed(6)},${pendingTeleport.lng.toFixed(6)}`
+    if (key === previousKeyRef.current) return
+    previousKeyRef.current = key
+    map.flyTo(
+      [pendingTeleport.lat, pendingTeleport.lng],
+      Math.max(map.getZoom(), 15),
+      { duration: 0.8 }
+    )
+  }, [map, pendingTeleport])
+
+  return null
+}
+
 function MapClickHandler(): null {
   const mapClickMode = useUiStore((s) => s.mapClickMode)
   const addControlPoint = useRouteStore((s) => s.addControlPoint)
@@ -243,6 +267,7 @@ export function MapView(): JSX.Element {
 
         <MapRefGrabber mapRef={mapRef} />
         <AutoPanToRealGps />
+        <AutoPanToPendingTeleport />
 
         {/* Real GPS — hollow green circle with tooltip */}
         {realGpsLocation && (

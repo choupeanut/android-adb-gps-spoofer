@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { RoutePlanRoadRequest, RoutePlanRoadResponse, RouteWaypoint } from '../shared/types'
+import type {
+  GoogleMapsLinkResult,
+  RoutePlanRoadRequest,
+  RoutePlanRoadResponse,
+  RouteWaypoint,
+  SavedLocation,
+  SavedLocationMutationResult
+} from '../shared/types'
 
 export type GpsSpoofApi = typeof api
 
@@ -61,9 +68,15 @@ const api = {
   enableTcpip: (serial: string) => ipcRenderer.invoke('enable-tcpip', serial),
 
   // Saved locations
-  getSavedLocations: () => ipcRenderer.invoke('locations-get-saved'),
-  saveLocation: (name: string, lat: number, lng: number) =>
+  resolveGoogleMapsLink: (url: string): Promise<GoogleMapsLinkResult> =>
+    ipcRenderer.invoke('maps-resolve-link', url),
+  getSavedLocations: (): Promise<SavedLocation[]> => ipcRenderer.invoke('locations-get-saved'),
+  saveLocation: (name: string, lat: number, lng: number): Promise<SavedLocation> =>
     ipcRenderer.invoke('locations-save', name, lat, lng),
+  renameLocation: (id: number, name: string): Promise<SavedLocationMutationResult> =>
+    ipcRenderer.invoke('locations-rename', id, name),
+  touchLocation: (id: number): Promise<SavedLocationMutationResult> =>
+    ipcRenderer.invoke('locations-touch', id),
   deleteLocation: (id: number) => ipcRenderer.invoke('locations-delete', id),
   getLocationHistory: () => ipcRenderer.invoke('locations-get-history'),
   addLocationHistory: (lat: number, lng: number) =>

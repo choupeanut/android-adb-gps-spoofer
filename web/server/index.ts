@@ -17,6 +17,7 @@ import { DeviceEngineManager } from './services/device-engine-manager'
 import { Database } from './services/db'
 import { RoutePlannerService } from './services/route-planner'
 
+import { resolveGoogleMapsLink } from '@shared/google-maps-link'
 import type { RoutePlanRoadRequest, RouteWaypoint } from '@shared/types'
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10)
@@ -314,9 +315,12 @@ handle('route-set-fixed-speed', (enabled: boolean, serials?: string[]) => {
 })
 
 // Saved locations
+handle('maps-resolve-link', (url: string) => resolveGoogleMapsLink(url))
 handle('locations-get-saved', () => db.getSavedLocations())
 handle('locations-get-history', () => db.getHistory())
 handle('locations-save', (name: string, lat: number, lng: number) => db.addSavedLocation(name, lat, lng))
+handle('locations-rename', (id: number, name: string) => db.renameSavedLocation(id, name))
+handle('locations-touch', (id: number) => db.touchSavedLocation(id))
 handle('locations-delete', (id: number) => { db.deleteSavedLocation(id); return true })
 handle('locations-add-history', (lat: number, lng: number) => { db.addHistory(lat, lng); return true })
 

@@ -39,7 +39,27 @@ export interface SavedLocation {
   lat: number
   lng: number
   createdAt: string
+  lastUsedAt: string
 }
+
+export type SavedLocationMutationErrorCode = 'invalid-id' | 'invalid-name' | 'not-found'
+
+export type SavedLocationMutationResult =
+  | { ok: true; location: SavedLocation }
+  | { ok: false; code: SavedLocationMutationErrorCode; message: string }
+
+export type GoogleMapsLinkErrorCode =
+  | 'unsupported-url'
+  | 'no-coordinates'
+  | 'invalid-coordinates'
+  | 'redirect-rejected'
+  | 'too-many-redirects'
+  | 'timeout'
+  | 'network-error'
+
+export type GoogleMapsLinkResult =
+  | { ok: true; lat: number; lng: number }
+  | { ok: false; code: GoogleMapsLinkErrorCode; message: string }
 
 export interface WifiIpHistoryEntry {
   ip: string

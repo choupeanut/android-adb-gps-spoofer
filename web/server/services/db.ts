@@ -4,30 +4,27 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { join } from 'path'
 import { mkdirSync } from 'fs'
-import type { SavedLocation, WifiIpHistoryEntry } from '@shared/types'
+import { SavedLocationRepository } from '@shared/saved-location-repository'
+import type { SavedLocation, SavedLocationMutationResult, WifiIpHistoryEntry } from '@shared/types'
 
 const MAX_HISTORY = 100
 
 export class Database {
   private db: BetterSqlite3.Database
+  private savedLocations: SavedLocationRepository
 
-  constructor() {
+  constructor(dbPathOverride?: string) {
     const dataDir = process.env.DATA_DIR ?? join(process.cwd(), 'data')
-    mkdirSync(dataDir, { recursive: true })
-    const dbPath = join(dataDir, 'pikmin-keep.db')
+    if (!dbPathOverride) mkdirSync(dataDir, { recursive: true })
+    const dbPath = dbPathOverride ?? join(dataDir, 'pikmin-keep.db')
     this.db = new BetterSqlite3(dbPath)
+    this.savedLocations = new SavedLocationRepository(this.db)
     this.init()
   }
 
   private init(): void {
+    this.savedLocations.init()
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS saved_locations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        lat REAL NOT NULL,
-        lng REAL NOT NULL,
-        created_at TEXT DEFAULT (datetime('now'))
-      );
       CREATE TABLE IF NOT EXISTS location_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         lat REAL NOT NULL,
@@ -61,16 +58,23 @@ export class Database {
   }
 
   getSavedLocations(): SavedLocation[] {
-    return this.db.prepare('SELECT * FROM saved_locations ORDER BY created_at DESC').all() as SavedLocation[]
+    return this.savedLocations.getAll()
   }
 
   addSavedLocation(name: string, lat: number, lng: number): SavedLocation {
-    const result = this.db.prepare('INSERT INTO saved_locations (name, lat, lng) VALUES (?, ?, ?)').run(name, lat, lng)
-    return this.db.prepare('SELECT * FROM saved_locations WHERE id = ?').get(result.lastInsertRowid) as SavedLocation
+    return this.savedLocations.add(name, lat, lng)
+  }
+
+  renameSavedLocation(id: number, name: string): SavedLocationMutationResult {
+    return this.savedLocations.rename(id, name)
+  }
+
+  touchSavedLocation(id: number): SavedLocationMutationResult {
+    return this.savedLocations.touch(id)
   }
 
   deleteSavedLocation(id: number): void {
-    this.db.prepare('DELETE FROM saved_locations WHERE id = ?').run(id)
+    this.savedLocations.delete(id)
   }
 
   getHistory(): Array<{ id: number; lat: number; lng: number; visited_at: string }> {
@@ -111,5 +115,9 @@ export class Database {
 
   deleteWifiIp(ip: string, port: number): void {
     this.db.prepare('DELETE FROM wifi_ip_history WHERE ip = ? AND port = ?').run(ip.trim(), port)
+  }
+
+  close(): void {
+    this.db.close()
   }
 }

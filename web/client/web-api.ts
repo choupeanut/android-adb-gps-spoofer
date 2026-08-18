@@ -205,9 +205,12 @@ const api = {
   enableTcpip: (serial: string) => wsInvoke('enable-tcpip', serial),
 
   // Saved locations
+  resolveGoogleMapsLink: (url: string) => wsInvoke('maps-resolve-link', url),
   getSavedLocations: () => wsInvoke('locations-get-saved'),
   saveLocation: (name: string, lat: number, lng: number) =>
     wsInvoke('locations-save', name, lat, lng),
+  renameLocation: (id: number, name: string) => wsInvoke('locations-rename', id, name),
+  touchLocation: (id: number) => wsInvoke('locations-touch', id),
   deleteLocation: (id: number) => wsInvoke('locations-delete', id),
   getLocationHistory: () => wsInvoke('locations-get-history'),
   addLocationHistory: (lat: number, lng: number) =>

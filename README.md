@@ -32,6 +32,7 @@ The implementation is optimized for controlled Android location-testing workflow
 **Location Control**
 
 - Teleport by map click or manual latitude/longitude
+- Import short or full Google Maps sharing links, preview the resolved coordinates, then confirm with Teleport
 - Teleport always pushes the target coordinate immediately
 - Joystick mode with virtual joystick plus `W/A/S/D` and arrow keys
 - Manual multi-waypoint routes
@@ -53,7 +54,7 @@ The implementation is optimized for controlled Android location-testing workflow
 
 **Persistence**
 
-- SQLite-backed saved locations
+- SQLite-backed saved locations with editable names and three recently used quick picks
 - Location history capped at 100 entries
 - Wi-Fi IP history for Add Device quick buttons
 - Session settings for speed, route mode, loop/wander, control points, and toggles
@@ -230,6 +231,7 @@ Android ADB GPS Spoofer 是一個透過 ADB 控制 Android GPS test provider 的
 **位置控制**
 
 - 地圖點選或手動座標瞬移
+- 匯入 Google Maps 短連結或完整分享連結，預覽解析座標後再按 Teleport 確認定位
 - Teleport 一律立即推送目標座標
 - 虛擬搖桿、`W/A/S/D`、方向鍵
 - 手動多點路線
@@ -251,7 +253,7 @@ Android ADB GPS Spoofer 是一個透過 ADB 控制 Android GPS test provider 的
 
 **持久化**
 
-- SQLite 收藏地點
+- SQLite 收藏地點，可改名並顯示最近使用的 3 筆快選
 - 最近位置歷史最多 100 筆
 - Add Device Wi-Fi IP history
 - Session 保存速度、路線模式、loop/wander、控制點與 toggle

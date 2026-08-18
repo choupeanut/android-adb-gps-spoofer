@@ -3,7 +3,6 @@ import { DeviceList } from '../device/DeviceList'
 import { Joystick } from '../controls/Joystick'
 import { RoutePanel } from '../controls/RoutePanel'
 import { CooldownTimer } from '../controls/CooldownTimer'
-import { SavedLocations } from './SavedLocations'
 import { LocationHistory } from './LocationHistory'
 import { LogPanel } from './LogPanel'
 import { useLocationStore } from '../../stores/location.store'
@@ -115,7 +114,6 @@ export function Sidebar(): JSX.Element {
                 Click the map to teleport, or use the panel at top-right. The <span className="text-yellow-400">★</span> button saves a location.
               </p>
             </div>
-            <SavedLocations />
             <LocationHistory />
           </div>
         )}
