@@ -15,7 +15,7 @@ interface Props {
 type Step = 'method' | 'wifi-ip' | 'usb-tcpip'
 
 const WIFI_HISTORY_KEY = 'gps-spoofer:wifi-ip-history'
-const QUICK_HISTORY_LIMIT = 5
+const QUICK_HISTORY_LIMIT = 10
 
 function readLocalHistory(): WifiIpHistoryEntry[] {
   try {

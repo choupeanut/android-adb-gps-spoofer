@@ -23,13 +23,12 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
 
   setDevices: (devices) =>
     set((s) => {
-      const connected = new Set(
-        devices.filter((d) => d.status === 'connected').map((d) => d.serial)
-      )
-      return {
-        devices,
-        selectedSerials: s.selectedSerials.filter((serial) => connected.has(serial))
-      }
+      const discovered = new Set(devices.map((device) => device.serial))
+      // Selection is user intent; keep absent selected devices visible and removable.
+      const missingSelected = s.devices.filter(
+        (device) => s.selectedSerials.includes(device.serial) && !discovered.has(device.serial)
+      ).map((device) => ({ ...device, status: 'offline' as const }))
+      return { devices: [...devices, ...missingSelected] }
     }),
 
   setActiveDevice: (activeDevice) => set({ activeDevice }),

@@ -7,6 +7,7 @@ export class DeviceManager {
   private adb: AdbService
   private devices: DeviceInfo[] = []
   private pollTimer: ReturnType<typeof setInterval> | null = null
+  private pollInFlight: Promise<void> | null = null
   private activeDevice: string | null = null
   private changeListeners: Array<(connectedSerials: Set<string>) => void> = []
 
@@ -36,7 +37,14 @@ export class DeviceManager {
     this.pollTimer = setInterval(() => this.pollDevices(), ADB_POLL_INTERVAL_MS)
   }
 
-  private async pollDevices(): Promise<void> {
+  private pollDevices(): Promise<void> {
+    if (!this.pollInFlight) {
+      this.pollInFlight = this.readDevices().finally(() => { this.pollInFlight = null })
+    }
+    return this.pollInFlight
+  }
+
+  private async readDevices(): Promise<void> {
     const newDevices = await this.adb.listDevices()
 
     const oldSerials = new Set(this.devices.map((d) => d.serial))
@@ -48,15 +56,18 @@ export class DeviceManager {
     if (added.length > 0 || removed.length > 0 || this.hasStatusChanges(newDevices)) {
       this.devices = newDevices
 
-      if (this.activeDevice && !newSerials.has(this.activeDevice)) {
-        this.activeDevice = newDevices.length > 0 ? newDevices[0].serial : null
-      }
-
       if (!this.activeDevice && newDevices.length > 0) {
         this.activeDevice = newDevices[0].serial
       }
 
       this.notifyRenderer()
+    }
+
+    const connectedSerials = new Set(
+      this.devices.filter((d) => d.status === 'connected').map((d) => d.serial)
+    )
+    for (const listener of this.changeListeners) {
+      listener(connectedSerials)
     }
 
     for (const device of removed) {
@@ -78,13 +89,6 @@ export class DeviceManager {
       devices: this.devices,
       activeDevice: this.activeDevice
     })
-    // Notify engine manager to prune disconnected device engines
-    const connectedSerials = new Set(
-      this.devices.filter((d) => d.status === 'connected').map((d) => d.serial)
-    )
-    for (const listener of this.changeListeners) {
-      listener(connectedSerials)
-    }
   }
 
   /** Force an immediate device poll (e.g. after WiFi connect). */

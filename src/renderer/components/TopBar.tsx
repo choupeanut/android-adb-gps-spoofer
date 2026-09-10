@@ -101,7 +101,7 @@ export function TopBar(): JSX.Element {
     if (playing) window.api.routeSetSpeed(ms)
   }
 
-  const availableDevices = devices.filter((d) => d.status === 'connected' || d.status === 'unauthorized')
+  const availableDevices = devices.filter((d) => d.status !== 'offline' || selectedSerials.includes(d.serial) || d.serial === activeDevice)
   const activeDeviceInfo = devices.find((d) => d.serial === activeDevice)
   const selectedCount = selectedSerials.length
 
@@ -118,6 +118,7 @@ export function TopBar(): JSX.Element {
         {/* Device selector */}
         <div className="relative" ref={deviceDropdownRef}>
           <button
+            aria-label="Select devices"
             onClick={() => setShowDeviceDropdown((v) => !v)}
             className="flex items-center gap-2 px-3 py-1.5 text-sm bg-surface-elevated border border-border rounded-[var(--radius-sm)] hover:bg-surface-hover transition-colors min-w-[140px]"
           >
@@ -133,7 +134,7 @@ export function TopBar(): JSX.Element {
 
           {showDeviceDropdown && (
             <div className="absolute top-full mt-1 left-0 w-64 bg-surface border border-border rounded-[var(--radius-md)] shadow-elevation-lg py-1 z-[1200]">
-              {availableDevices.some((d) => d.status === 'connected') && (
+              {(selectedCount > 0 || availableDevices.some((d) => d.status === 'connected')) && (
                 <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border">
                   <button
                     onClick={selectAll}
@@ -166,6 +167,7 @@ export function TopBar(): JSX.Element {
                     >
                       <input
                         type="checkbox"
+                        aria-label={`Select ${dev.serial}`}
                         checked={isSelected}
                         onChange={() => toggleSelectSerial(dev.serial)}
                         className="rounded shrink-0"
@@ -175,15 +177,16 @@ export function TopBar(): JSX.Element {
                       <button
                         className="flex-1 text-left"
                         onClick={() => {
-                          if (dev.status === 'unauthorized') return
+                          if (dev.status !== 'connected') return
                           selectDevice(dev.serial)
                           setShowDeviceDropdown(false)
                         }}
-                        disabled={dev.status === 'unauthorized'}
+                        disabled={dev.status !== 'connected'}
                       >
                         <p className="text-sm text-foreground flex items-center gap-1.5">
                           {dev.model || dev.serial}
                           {isActive && <Check size={12} className="text-primary" />}
+                          {dev.status === 'offline' && <span className="text-xs text-foreground-muted">Offline</span>}
                           {dev.status === 'unauthorized' && <span className="text-xs text-warning">⚠ Unauthorized</span>}
                         </p>
                         <p className="text-xs text-foreground-secondary">

@@ -3,7 +3,8 @@ import {
   isValidCoordinates,
   isValidLatitude,
   isValidLongitude,
-  parseCoordinateInput
+  parseCoordinateInput,
+  parseCoordinatePair
 } from '../../src/shared/coordinate-validation'
 
 describe('coordinate validation', () => {
@@ -27,4 +28,20 @@ describe('coordinate validation', () => {
     expect(isValidLongitude(-180.0001)).toBe(false)
     expect(isValidCoordinates(Number.NaN, 121)).toBe(false)
   })
+})
+
+describe('pasted coordinate pairs', () => {
+  it.each(['25.033,121.565', ' 25.033 , 121.565 ', '25.033 121.565', '25.033\t\n121.565'])(
+    'parses %s in latitude longitude order', (value) => {
+      expect(parseCoordinatePair(value)).toEqual({ lat: 25.033, lng: 121.565 })
+    }
+  )
+  it('accepts negative values, zero and boundaries', () => {
+    expect(parseCoordinatePair('-90,180')).toEqual({ lat: -90, lng: 180 })
+    expect(parseCoordinatePair('0 -.5')).toEqual({ lat: 0, lng: -0.5 })
+  })
+  it.each(['', '25', '25,', ',121', '25,,121', '25 121 0', '91,121', '25,-181',
+    'NaN,121', '25abc,121', '25 1,121', '25,121,', '25;121'])(
+    'rejects malformed or incomplete pair %s', (value) => expect(parseCoordinatePair(value)).toBeNull()
+  )
 })

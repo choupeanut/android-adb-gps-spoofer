@@ -79,14 +79,9 @@ export function RoutePanel(): JSX.Element {
       const added = effectiveTargets.filter((s) => !prevTargetsRef.current.includes(s))
       if (added.length > 0) {
         ;(async (): Promise<void> => {
-          for (const serial of added) {
-            await window.api.enableMockLocation(serial)
-            await window.api.routeSetWaypoints(waypoints, [serial])
-            window.api.routeSetLoop(loop)
-            window.api.routeSetWander(wanderEnabled, wanderRadiusM)
-            window.api.routeSetFixedSpeed(fixedSpeed)
-            await window.api.routePlay([serial], speedMs)
-          }
+          await Promise.all(added.map((serial) => window.api.enableMockLocation(serial)))
+          // Include existing members so the backend joins their current timeline.
+          await window.api.routePlay(effectiveTargets, speedMs)
         })()
       }
     }

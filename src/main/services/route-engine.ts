@@ -42,6 +42,10 @@ export class RouteEngine {
   private wanderTimer: ReturnType<typeof setTimeout> | null = null
   private currentLocation: LocationUpdate | null = null
   private targetSerials: string[] = []
+  private memberSerials: string[] = []
+  private generation = 0
+  private disposed = false
+  private deliveries = new Map<string, Set<Promise<boolean>>>()
   private speedMs = 1.4
   private fixedSpeed = false
   private wanderEnabled = false
@@ -76,11 +80,37 @@ export class RouteEngine {
   getState(): RouteState { return { ...this.state } }
   getCurrentLocation(): LocationUpdate | null { return this.currentLocation }
 
+  /** Mode handoff must drain already-issued ADB writes before starting a new writer. */
+  async waitForDelivery(serial: string): Promise<void> {
+    await Promise.all(this.deliveries.get(serial) ?? [])
+  }
+
+  private pushToTarget(serial: string, loc: LocationUpdate): Promise<boolean> {
+    const pending = this.deliveries.get(serial) ?? new Set<Promise<boolean>>()
+    // A slow/offline device must not delay peers or queue stale route positions.
+    if (pending.size > 0) return Promise.resolve(false)
+    this.deliveries.set(serial, pending)
+    const task = this.adb.pushLocation(serial, loc).catch(() => false)
+    pending.add(task)
+    void task.finally(() => {
+      pending.delete(task)
+      if (pending.size === 0) this.deliveries.delete(serial)
+    })
+    return task
+  }
+
+  /** Delivery readiness is separate from durable group membership. */
+  setTargets(ready: string[], members: string[]): void {
+    this.targetSerials = [...ready]
+    this.memberSerials = [...members]
+  }
+
   async play(serials: string[], speedMs: number, fromLat?: number, fromLng?: number): Promise<void> {
     if (this.state.waypoints.length < 2) return
     this.stopWander()
     this.state.finishedNaturally = false
     this.targetSerials = serials
+    if (this.memberSerials.length === 0) this.memberSerials = [...serials]
     this.speedMs = speedMs
     this.state.playing = true
     this.stopKeepAlive()
@@ -88,7 +118,7 @@ export class RouteEngine {
     const firstWp = this.state.waypoints[0]
 
     // Glide from current position to first waypoint if within threshold
-    if (fromLat !== undefined && fromLng !== undefined) {
+    if (!this.currentLocation && fromLat !== undefined && fromLng !== undefined) {
       const distKm = haversineDistance(fromLat, fromLng, firstWp.lat, firstWp.lng)
       if (distKm > 0.001 && distKm <= GLIDE_MAX_KM) {
         this.currentLocation = {
@@ -210,6 +240,7 @@ export class RouteEngine {
   }
 
   private stopTimer(): void {
+    this.generation += 1
     if (this.timer) {
       clearInterval(this.timer)
       this.timer = null
@@ -247,7 +278,7 @@ export class RouteEngine {
   }
 
   private async pushLocationToTargets(loc: LocationUpdate): Promise<boolean[]> {
-    const results = await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
+    const results = await Promise.all(this.targetSerials.map((s) => this.pushToTarget(s, loc)))
     if (results.some(Boolean)) this.lastPushOkAt = Date.now()
     return results
   }
@@ -275,7 +306,7 @@ export class RouteEngine {
       if (!this.currentLocation || this.targetSerials.length === 0) return
       const loc = applyJitter({ ...this.currentLocation, speed: 0, bearing: 0, timestamp: Date.now() })
       await Promise.race([
-        Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc))),
+        Promise.all(this.targetSerials.map((s) => this.pushToTarget(s, loc))),
         new Promise(resolve => setTimeout(resolve, 1500))
       ]).catch(() => {})
     }, 1000)
@@ -353,6 +384,7 @@ export class RouteEngine {
     let progress = 0
 
     this.stopTimer()
+    const generation = this.generation
     this.timer = setInterval(async () => {
       progress = Math.min(1, progress + stepKm / distKm)
       const pos = interpolatePoints(fromLat, fromLng, to.lat, to.lng, progress)
@@ -362,6 +394,7 @@ export class RouteEngine {
       }
       this.currentLocation = loc
       await this.pushLocationToTargets(loc)
+      if (generation !== this.generation) return
       this.notifyRenderer()
 
       if (progress >= 1) {
@@ -386,6 +419,7 @@ export class RouteEngine {
     let progress = 0
 
     this.stopTimer()
+    const generation = this.generation
     this.timer = setInterval(async () => {
       progress = Math.min(1, progress + stepKm / distKm)
       const pos = interpolatePoints(fromLat, fromLng, toLat, toLng, progress)
@@ -395,6 +429,7 @@ export class RouteEngine {
       }
       this.currentLocation = loc
       await this.pushLocationToTargets(loc)
+      if (generation !== this.generation) return
       this.notifyRenderer()
 
       if (progress >= 1) {
@@ -407,7 +442,6 @@ export class RouteEngine {
 
   private async tick(): Promise<void> {
     if (!this.state.playing || !this.currentLocation) return
-    if (this.pushInFlight) return // backpressure guard for tick
 
     const wp = this.state.waypoints
     if (wp.length < 2) return
@@ -468,12 +502,8 @@ export class RouteEngine {
     }
 
     this.currentLocation = loc
-    this.pushInFlight = true
-    try {
-      await this.pushLocationToTargets(loc)
-    } finally {
-      this.pushInFlight = false
-    }
+    // Advance the shared clock independently of individual ADB round trips.
+    void this.pushLocationToTargets(loc)
     this.notifyRenderer()
 
     // Advance segment index after pushing location so the position is correct this tick.
@@ -501,20 +531,18 @@ export class RouteEngine {
   }
 
   private notifyRenderer(): void {
-    broadcast('route-updated', {
-      serial: this.serial,
-      state: this.state,
-      location: this.currentLocation
-    })
-    // Always send location-updated so renderer can reset mode to idle when location clears
-    broadcast('location-updated', {
-      serial: this.serial,
-      location: this.currentLocation,
-      mode: (this.currentLocation ? 'route' : 'idle') as SpoofMode
-    })
+    if (this.disposed) return
+    for (const serial of this.memberSerials.length ? this.memberSerials : [this.serial]) {
+      broadcast('route-updated', { serial, state: this.state, location: this.currentLocation })
+      broadcast('location-updated', {
+        serial, location: this.currentLocation,
+        mode: (this.currentLocation ? 'route' : 'idle') as SpoofMode
+      })
+    }
   }
 
   dispose(): void {
+    this.disposed = true
     this.stopTimer()
     this.stopKeepAlive()
     this.stopWander()

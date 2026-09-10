@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
+import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type JSX } from 'react'
 import { Star, AlertTriangle, Footprints, Bike, Car, Plane, Search, MapPin } from 'lucide-react'
 import type { SavedLocation } from '@shared/types'
 import {
   isValidLatitude,
   isValidLongitude,
-  parseCoordinateInput
+  parseCoordinateInput,
+  parseCoordinatePair
 } from '@shared/coordinate-validation'
 import { haversineKm, getCooldownMinutes } from '@shared/geo'
 import { SPEED_PRESETS } from '@shared/constants'
@@ -216,6 +217,13 @@ export function TeleportPanel(): JSX.Element {
     applyTarget(targetLat, targetLng)
   }
 
+  const handleCoordinatePaste = (event: ClipboardEvent<HTMLInputElement>): void => {
+    const pair = parseCoordinatePair(event.clipboardData.getData('text'))
+    if (!pair) return
+    event.preventDefault()
+    applyTarget(pair.lat, pair.lng)
+  }
+
   const handleTeleport = async (): Promise<void> => {
     if (!hasDevice || !validateCoordinates()) return
     setIsTeleporting(true)
@@ -406,6 +414,7 @@ export function TeleportPanel(): JSX.Element {
             setLat(event.target.value)
             setCoordinatesValidated(false)
           }}
+          onPaste={handleCoordinatePaste}
           onBlur={applyManualTarget}
           onKeyDown={(event) => {
             if (event.key === 'Enter') applyManualTarget()
@@ -422,6 +431,7 @@ export function TeleportPanel(): JSX.Element {
             setLng(event.target.value)
             setCoordinatesValidated(false)
           }}
+          onPaste={handleCoordinatePaste}
           onBlur={applyManualTarget}
           onKeyDown={(event) => {
             if (event.key === 'Enter') applyManualTarget()
