@@ -20,6 +20,7 @@ export interface RouteControl {
 export interface LocationControl {
   getMode(): SpoofMode
   getCurrentLocation(): LocationUpdate | null
+  waitForDelivery(serial: string): Promise<void>
   setMode(mode: SpoofMode): void
   updatePosition(lat: number, lng: number, bearing: number, speed: number): void
   teleport(serials: string[], lat: number, lng: number): Promise<boolean>
@@ -106,7 +107,8 @@ export class SharedDeviceEngineManager<L extends LocationControl, R extends Rout
   }
 
   async settleRecovery(serial: string): Promise<void> {
-    await Promise.all([this.pending.get(serial), this.draining.get(serial)])
+    const location = this.engines.get(serial)?.location.waitForDelivery(serial)
+    await Promise.all([this.pending.get(serial), this.draining.get(serial), location])
   }
 
   removeDevice(serial: string): void {

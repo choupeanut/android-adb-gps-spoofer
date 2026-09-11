@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX } from 'react'
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { RefreshCw, Navigation, Route, Crosshair, MapPin, Layers } from 'lucide-react'
 import { MapContainer, TileLayer, Marker, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
@@ -235,6 +235,10 @@ export function MapView(): JSX.Element {
 
   const showBearing = mode === 'route' || mode === 'joystick'
   const showSpeed = (mode === 'route' || mode === 'joystick') && location != null && location.speed > 0.05
+  const locationIcon = useMemo(
+    () => createLocationIcon(showBearing && location ? location.bearing : 0),
+    [showBearing, location?.bearing]
+  )
 
   const handleRefreshGps = async (): Promise<void> => {
     if (!activeDevice) return
@@ -271,7 +275,7 @@ export function MapView(): JSX.Element {
 
         {/* Real GPS — hollow green circle with tooltip */}
         {realGpsLocation && (
-          <Marker position={[realGpsLocation.lat, realGpsLocation.lng]} icon={realGpsIcon}>
+          <Marker key="real-gps" position={[realGpsLocation.lat, realGpsLocation.lng]} icon={realGpsIcon}>
             <Tooltip permanent direction="top" offset={[0, -14]} className="text-[10px]">
               Real GPS
             </Tooltip>
@@ -295,7 +299,7 @@ export function MapView(): JSX.Element {
 
         {/* Pending teleport destination — orange circle */}
         {pendingTeleport && (
-          <Marker position={[pendingTeleport.lat, pendingTeleport.lng]} icon={pendingTeleportIcon}>
+          <Marker key="pending-teleport" position={[pendingTeleport.lat, pendingTeleport.lng]} icon={pendingTeleportIcon}>
             <Tooltip permanent direction="top" offset={[0, -14]} className="text-[10px]">
               Pending destination
             </Tooltip>
@@ -305,8 +309,10 @@ export function MapView(): JSX.Element {
         {/* Spoofed position — direction arrow */}
         {location && (
           <Marker
+            key="spoofed-location"
             position={[location.lat, location.lng]}
-            icon={createLocationIcon(showBearing ? location.bearing : 0)}
+            icon={locationIcon}
+            zIndexOffset={1000}
           />
         )}
 

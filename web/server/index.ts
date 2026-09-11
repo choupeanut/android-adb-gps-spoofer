@@ -20,6 +20,7 @@ import { RoutePlannerService } from './services/route-planner'
 
 import { resolveGoogleMapsLink } from '@shared/google-maps-link'
 import type { RoutePlanRoadRequest, RouteWaypoint } from '@shared/types'
+import { nextEventRevision } from '@shared/event-revision'
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10)
 const DATA_DIR = process.env.DATA_DIR ?? join(process.cwd(), 'data')
@@ -328,16 +329,23 @@ wss.on('connection', (ws, req) => {
 
   // Send initial state
   const firstSerial = engineManager.getActiveSerials()[0]
-  const initLoc = firstSerial ? engineManager.getEngines(firstSerial).location : null
-  const initRoute = firstSerial ? engineManager.getEngines(firstSerial).route : null
+  const serial = deviceManager.getActiveDevice() ?? firstSerial
+  const initPair = serial ? engineManager.getEngines(serial) : null
+  const initRoute = initPair?.route ?? null
+  const routeLocation = initRoute?.getCurrentLocation() ?? null
+  const initLocation = routeLocation ?? initPair?.location.getCurrentLocation() ?? null
+  const initMode = routeLocation ? 'route' : initPair?.location.getMode() ?? 'idle'
+  const revision = nextEventRevision()
 
   ws.send(JSON.stringify({
     type: 'init',
     data: {
       devices: deviceManager.getDevices(),
       activeDevice: deviceManager.getActiveDevice(),
-      location: initLoc?.getCurrentLocation() ?? null,
-      mode: initLoc?.getMode() ?? 'idle',
+      serial,
+      revision,
+      location: initLocation,
+      mode: initMode,
       route: initRoute?.getState() ?? null
     }
   }))

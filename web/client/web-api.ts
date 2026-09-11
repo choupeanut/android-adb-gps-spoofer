@@ -57,10 +57,10 @@ function connectWs(): void {
         }
       } else if (msg.type === 'init') {
         // Initial state from server on connect
-        const { devices, activeDevice, location, mode, route } = msg.data
+        const { devices, activeDevice, serial, revision, location, mode, route } = msg.data
         fire('devices-changed', { devices, activeDevice })
-        fire('location-updated', { location, mode })
-        if (route) fire('route-updated', { state: route, location })
+        fire('location-updated', { serial, revision, location, mode })
+        if (route) fire('route-updated', { serial, revision, state: route, location })
       }
     } catch { /* ignore parse errors */ }
   }
@@ -154,7 +154,7 @@ const api = {
   stopSpoofing: (serials: string[]) => wsInvoke('stop-spoofing', serials),
   stopSpoofingGraceful: (serials: string[], realLat: number, realLng: number) =>
     wsInvoke('stop-spoofing-graceful', serials, realLat, realLng),
-  getLocationState: () => wsInvoke('get-location-state'),
+  getLocationState: (serial?: string) => wsInvoke('get-location-state', serial),
   stopAll: (mode: 'stay' | 'graceful' | 'immediate') => wsInvoke('stop-all', mode),
 
   // Route

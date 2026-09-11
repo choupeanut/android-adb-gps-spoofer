@@ -5,6 +5,7 @@ import { haversineDistance, bearing, interpolatePoints } from '../utils/coordina
 import { DEFAULT_ACCURACY, UPDATE_INTERVAL_MS } from '@shared/constants'
 import { log } from '../logger'
 import type { RouteWaypoint, LocationUpdate, SpoofMode } from '@shared/types'
+import { nextEventRevision } from '@shared/event-revision'
 
 const GLIDE_MAX_KM = 0.5  // 500 m — glide to route start if within this distance
 // Push health monitoring - faster detection prevents GPS jump-back
@@ -54,6 +55,8 @@ export class RouteEngine {
   private pushInFlight = false
   /** Backup keep-alive timer for dual-channel strategy */
   private backupKeepAliveTimer: ReturnType<typeof setInterval> | null = null
+  /** Invalidates async keep-alive callbacks during route handoff. */
+  private keepAliveGeneration = 0
   /** Route/glide watchdog timer to recover from push stalls. */
   private pushWatchdogTimer: ReturnType<typeof setInterval> | null = null
   /** Timestamp of last successful pushLocation call. */
@@ -257,9 +260,11 @@ export class RouteEngine {
       if ((Date.now() - this.lastPushOkAt) <= ROUTE_PUSH_STALE_MS) return
 
       this.pushInFlight = true
+      const generation = this.generation
       try {
         const emergencyLoc: LocationUpdate = { ...this.currentLocation, timestamp: Date.now() }
         const results = await this.pushLocationToTargets(emergencyLoc)
+        if (generation !== this.generation) return
         if (results.some(Boolean)) {
           log('warn', `[Route-watchdog] emergency push recovered stale stream for [${this.targetSerials.join(', ')}]`)
           this.notifyRenderer()
@@ -277,8 +282,8 @@ export class RouteEngine {
     }
   }
 
-  private async pushLocationToTargets(loc: LocationUpdate): Promise<boolean[]> {
-    const results = await Promise.all(this.targetSerials.map((s) => this.pushToTarget(s, loc)))
+  private async pushLocationToTargets(loc: LocationUpdate, serials = this.targetSerials): Promise<boolean[]> {
+    const results = await Promise.all(serials.map((s) => this.pushToTarget(s, loc)))
     if (results.some(Boolean)) this.lastPushOkAt = Date.now()
     return results
   }
@@ -286,15 +291,19 @@ export class RouteEngine {
   private startKeepAlive(): void {
     this.stopKeepAlive()
     this.pushInFlight = false
+    const generation = this.keepAliveGeneration
 
     // Primary channel with backpressure guard
     this.keepAliveTimer = setInterval(async () => {
+      if (generation !== this.keepAliveGeneration) return
       if (!this.currentLocation || this.targetSerials.length === 0) return
       if (this.pushInFlight) return // skip if previous push pending
       this.pushInFlight = true
       try {
         const loc = applyJitter({ ...this.currentLocation, speed: 0, bearing: 0, timestamp: Date.now() })
-        await this.pushLocationToTargets(loc)
+        const targets = [...this.targetSerials]
+        await this.pushLocationToTargets(loc, targets)
+        if (generation !== this.keepAliveGeneration) return
         this.notifyRenderer()
       } finally {
         this.pushInFlight = false
@@ -303,16 +312,19 @@ export class RouteEngine {
 
     // Backup channel: independent push every 1s as safety net (was 2.5s)
     this.backupKeepAliveTimer = setInterval(async () => {
+      if (generation !== this.keepAliveGeneration) return
       if (!this.currentLocation || this.targetSerials.length === 0) return
       const loc = applyJitter({ ...this.currentLocation, speed: 0, bearing: 0, timestamp: Date.now() })
+      const targets = [...this.targetSerials]
       await Promise.race([
-        Promise.all(this.targetSerials.map((s) => this.pushToTarget(s, loc))),
+        Promise.all(targets.map((s) => this.pushToTarget(s, loc))),
         new Promise(resolve => setTimeout(resolve, 1500))
       ]).catch(() => {})
     }, 1000)
   }
 
   private stopKeepAlive(): void {
+    this.keepAliveGeneration += 1
     if (this.keepAliveTimer) {
       clearInterval(this.keepAliveTimer)
       this.keepAliveTimer = null
@@ -532,10 +544,11 @@ export class RouteEngine {
 
   private notifyRenderer(): void {
     if (this.disposed) return
+    const revision = nextEventRevision()
     for (const serial of this.memberSerials.length ? this.memberSerials : [this.serial]) {
-      broadcast('route-updated', { serial, state: this.state, location: this.currentLocation })
+      broadcast('route-updated', { serial, revision, state: this.state, location: this.currentLocation })
       broadcast('location-updated', {
-        serial, location: this.currentLocation,
+        serial, revision, location: this.currentLocation,
         mode: (this.currentLocation ? 'route' : 'idle') as SpoofMode
       })
     }

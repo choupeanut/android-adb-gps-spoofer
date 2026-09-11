@@ -9,6 +9,7 @@ import { haversineDistance, bearing, interpolatePoints } from './coordinates'
 import { UPDATE_INTERVAL_MS, DEFAULT_ACCURACY } from '@shared/constants'
 import { log } from '../logger'
 import type { LocationUpdate, SpoofMode } from '@shared/types'
+import { nextEventRevision } from '@shared/event-revision'
 
 const GRACEFUL_STOP_GLIDE_MAX_KM = 1.0
 const GLIDE_SPEED_MS = 1.4
@@ -35,6 +36,9 @@ export class LocationEngine {
   private updateTimer: ReturnType<typeof setInterval> | null = null
   private backupTimer: ReturnType<typeof setInterval> | null = null
   private targetSerials: string[] = []
+  /** Invalidates async timer callbacks when a mode handoff stops the timers. */
+  private generation = 0
+  private deliveries = new Map<string, Set<Promise<boolean>>>()
   /** Backpressure guard: skip tick if previous push still in-flight (W2) */
   private pushInFlight = false
 
@@ -44,7 +48,27 @@ export class LocationEngine {
   getCurrentLocation(): LocationUpdate | null { return this.currentLocation }
   getTargetSerials(): string[] { return [...this.targetSerials] }
 
+  async waitForDelivery(serial: string): Promise<void> {
+    await Promise.all(this.deliveries.get(serial) ?? [])
+  }
+
+  private pushToTarget(serial: string, loc: LocationUpdate): Promise<boolean> {
+    const pending = this.deliveries.get(serial) ?? new Set<Promise<boolean>>()
+    // A slow device must not stall peer updates or queue stale positions.
+    if (pending.size > 0) return Promise.resolve(false)
+    this.deliveries.set(serial, pending)
+    const task = this.adb.pushLocation(serial, loc).catch(() => false)
+    pending.add(task)
+    void task.finally(() => {
+      pending.delete(task)
+      if (pending.size === 0) this.deliveries.delete(serial)
+    })
+    return task
+  }
+
   async teleport(serials: string[], lat: number, lng: number): Promise<boolean> {
+    this.stopContinuousUpdate()
+    const generation = this.generation
     this.targetSerials = serials
     this.mode = 'teleport'
 
@@ -56,11 +80,14 @@ export class LocationEngine {
     }
     this.currentLocation = loc
     log('info', `[Teleport] → ${lat.toFixed(6)}, ${lng.toFixed(6)}`)
-    const results = await Promise.all(serials.map((s) => this.adb.pushLocation(s, loc)))
+    await Promise.all(serials.map((s) => this.waitForDelivery(s)))
+    if (generation !== this.generation) return false
+    const results = await Promise.all(serials.map((s) => this.pushToTarget(s, loc)))
     // W3: Check per-serial results and warn on failures
     results.forEach((ok, i) => {
       if (!ok) log('warn', `[Teleport] push failed for ${serials[i]}`)
     })
+    if (generation !== this.generation) return results.every((r) => r)
     this.startKeepAlive(serials)
     this.notifyRenderer()
     return results.every((r) => r)
@@ -68,6 +95,7 @@ export class LocationEngine {
 
   glideTo(serials: string[], fromLat: number, fromLng: number, toLat: number, toLng: number, onDone: () => void): void {
     this.stopContinuousUpdate()
+    const generation = this.generation
     this.targetSerials = serials
     this.mode = 'teleport'
     const distKm = haversineDistance(fromLat, fromLng, toLat, toLng)
@@ -77,13 +105,20 @@ export class LocationEngine {
     let progress = 0
     this.currentLocation = { lat: fromLat, lng: fromLng, altitude: 0, accuracy: DEFAULT_ACCURACY, bearing: brg, speed: GLIDE_SPEED_MS, timestamp: Date.now() }
     this.updateTimer = setInterval(async () => {
+      if (generation !== this.generation) return
       progress = Math.min(1, progress + stepKm / distKm)
       const pos = interpolatePoints(fromLat, fromLng, toLat, toLng, progress)
       const loc: LocationUpdate = { lat: pos.lat, lng: pos.lng, altitude: 0, accuracy: DEFAULT_ACCURACY, bearing: brg, speed: GLIDE_SPEED_MS, timestamp: Date.now() }
       this.currentLocation = loc
-      await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
+      const targets = [...this.targetSerials]
+      await Promise.all(targets.map((s) => this.pushToTarget(s, loc)))
+      if (generation !== this.generation) return
       this.notifyRenderer()
-      if (progress >= 1) { this.stopContinuousUpdate(); onDone() }
+      if (progress >= 1) {
+        const completed = generation === this.generation
+        this.stopContinuousUpdate()
+        if (completed) onDone()
+      }
     }, UPDATE_INTERVAL_MS)
   }
 
@@ -92,16 +127,20 @@ export class LocationEngine {
     this.targetSerials = serials
     this.mode = 'teleport'
     this.pushInFlight = false
+    const generation = this.generation
 
     // Primary channel: push every 1s with backpressure guard (W2)
     this.updateTimer = setInterval(async () => {
+      if (generation !== this.generation) return
       if (!this.currentLocation || this.mode !== 'teleport') return
       if (this.pushInFlight) return // W2: skip if previous push still pending
       this.pushInFlight = true
       try {
         const loc = applyJitter({ ...this.currentLocation, speed: 0, bearing: 0, timestamp: Date.now() })
-        const results = await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
-        results.forEach((ok, i) => { if (!ok) log('warn', `[KeepAlive] push failed for ${this.targetSerials[i]}`) })
+        const targets = [...this.targetSerials]
+        const results = await Promise.all(targets.map((s) => this.pushToTarget(s, loc)))
+        results.forEach((ok, i) => { if (!ok) log('warn', `[KeepAlive] push failed for ${targets[i]}`) })
+        if (generation !== this.generation || this.mode !== 'teleport') return
         this.notifyRenderer()
       } finally {
         this.pushInFlight = false
@@ -110,11 +149,13 @@ export class LocationEngine {
 
     // Backup channel: independent push every 1s as safety net (was 2.5s, dual-channel)
     this.backupTimer = setInterval(async () => {
+      if (generation !== this.generation) return
       if (!this.currentLocation || this.mode !== 'teleport') return
       const loc = applyJitter({ ...this.currentLocation, speed: 0, bearing: 0, timestamp: Date.now() })
+      const targets = [...this.targetSerials]
       // Use Promise.race with timeout so backup never blocks forever
       await Promise.race([
-        Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc))),
+        Promise.all(targets.map((s) => this.pushToTarget(s, loc))),
         new Promise(resolve => setTimeout(resolve, 1500))
       ]).catch(() => {})
     }, 1000)
@@ -124,15 +165,19 @@ export class LocationEngine {
     this.stopContinuousUpdate()
     this.targetSerials = serials
     this.pushInFlight = false
+    const generation = this.generation
     this.updateTimer = setInterval(async () => {
+      if (generation !== this.generation) return
       if (!this.currentLocation || this.mode !== 'joystick') return
       if (this.pushInFlight) return // W2: backpressure guard
       this.pushInFlight = true
       try {
         const loc: LocationUpdate = { ...this.currentLocation, speed: applySpeedFluctuation(this.currentLocation.speed), timestamp: Date.now() }
         this.currentLocation = loc
-        const results = await Promise.all(this.targetSerials.map((s) => this.adb.pushLocation(s, loc)))
-        results.forEach((ok, i) => { if (!ok) log('warn', `[Joystick] push failed for ${this.targetSerials[i]}`) })
+        const targets = [...this.targetSerials]
+        const results = await Promise.all(targets.map((s) => this.pushToTarget(s, loc)))
+        results.forEach((ok, i) => { if (!ok) log('warn', `[Joystick] push failed for ${targets[i]}`) })
+        if (generation !== this.generation || this.mode !== 'joystick') return
         this.notifyRenderer()
       } finally {
         this.pushInFlight = false
@@ -141,6 +186,7 @@ export class LocationEngine {
   }
 
   stopContinuousUpdate(): void {
+    this.generation += 1
     if (this.updateTimer) { clearInterval(this.updateTimer); this.updateTimer = null }
     if (this.backupTimer) { clearInterval(this.backupTimer); this.backupTimer = null }
     this.pushInFlight = false
@@ -158,10 +204,12 @@ export class LocationEngine {
 
   async stop(serials: string[]): Promise<void> {
     this.stopContinuousUpdate()
+    const generation = this.generation
     this.mode = 'idle'
     // W5: await removeTestProvider to prevent stale providers on restart
     await Promise.all(serials.map((s) => this.adb.removeTestProvider(s))).catch(() => {})
     await Promise.all(serials.map((s) => this.adb.maybeRestoreMasterLocation(s))).catch(() => {})
+    if (generation !== this.generation) return
     this.currentLocation = null
     this.targetSerials = []
     this.notifyRenderer()
@@ -182,7 +230,12 @@ export class LocationEngine {
   }
 
   private notifyRenderer(): void {
-    broadcast('location-updated', { serial: this.serial, location: this.currentLocation, mode: this.mode })
+    broadcast('location-updated', {
+      serial: this.serial,
+      revision: nextEventRevision(),
+      location: this.currentLocation,
+      mode: this.mode
+    })
   }
 
   dispose(): void { this.stopContinuousUpdate(); this.pushInFlight = false }

@@ -35,7 +35,7 @@ const api = {
   stopSpoofing: (serials: string[]) => ipcRenderer.invoke('stop-spoofing', serials),
   stopSpoofingGraceful: (serials: string[], realLat: number, realLng: number) =>
     ipcRenderer.invoke('stop-spoofing-graceful', serials, realLat, realLng),
-  getLocationState: () => ipcRenderer.invoke('get-location-state'),
+  getLocationState: (serial?: string) => ipcRenderer.invoke('get-location-state', serial),
   stopAll: (mode: 'stay' | 'graceful' | 'immediate') =>
     ipcRenderer.invoke('stop-all', mode),
 

@@ -123,28 +123,76 @@ export default function App(): JSX.Element {
 
   // Core IPC subscriptions
   useEffect(() => {
+    const revisions = new Map<string, number>()
+    let acceptedEventEpoch = 0
+
+    const isDisplayedSerial = (serial?: string): boolean => {
+      if (!serial) return true
+      const { activeDevice: currentActive, selectedSerials } = useDeviceStore.getState()
+      const displayedSerials = selectedSerials.length > 0
+        ? selectedSerials
+        : currentActive ? [currentActive] : []
+      // During startup the device list may not have arrived yet. Accepting the
+      // first snapshot prevents a location event from being lost in that gap.
+      return displayedSerials.length === 0 || displayedSerials.includes(serial)
+    }
+
+    const applyLocationEvent = (data: any, fallbackMode?: string): boolean => {
+      if (!data || typeof data !== 'object') return false
+      const serial = typeof data.serial === 'string' ? data.serial : undefined
+      const revision = Number(data.revision)
+      if (serial && Number.isFinite(revision)) {
+        const previous = revisions.get(serial)
+        if (previous !== undefined && revision < previous) return false
+        revisions.set(serial, revision)
+      }
+      if (!isDisplayedSerial(serial) || !Object.prototype.hasOwnProperty.call(data, 'location')) {
+        return false
+      }
+
+      setLocation(data.location ?? null)
+      const mode = typeof data.mode === 'string'
+        ? data.mode
+        : fallbackMode ?? (data.location ? 'route' : 'idle')
+      setMode(mode)
+      acceptedEventEpoch += 1
+      return true
+    }
+
+    const hydrateLocation = async (serial?: string): Promise<void> => {
+      if (typeof window.api.getLocationState !== 'function') return
+      const epochAtRequest = acceptedEventEpoch
+      try {
+        const snapshot: any = await window.api.getLocationState(serial)
+        // An event received after the request is newer than this snapshot.
+        if (epochAtRequest !== acceptedEventEpoch) return
+        applyLocationEvent({ ...snapshot, serial }, snapshot?.mode)
+      } catch {
+        // A transient ADB/WebSocket failure should not clear the marker.
+      }
+    }
+
     window.api.getDevices().then((data) => {
       setDevices(data.devices)
       setActiveDevice(data.activeDevice)
-    })
+      void hydrateLocation(data.activeDevice ?? undefined)
+    }).catch(() => {})
 
     const unsubDevices = window.api.onDevicesChanged((data: any) => {
+      const previousActive = useDeviceStore.getState().activeDevice
       setDevices(data.devices)
       setActiveDevice(data.activeDevice)
+      if (previousActive !== data.activeDevice) void hydrateLocation(data.activeDevice ?? undefined)
     })
 
     const unsubLocation = window.api.onLocationUpdated((data: any) => {
-      if (data.serial && data.serial !== useDeviceStore.getState().activeDevice) return
-      setLocation(data.location)
-      setMode(data.mode)
+      applyLocationEvent(data, data?.mode)
     })
 
     // Route events: drive the map marker AND route progress
     const unsubRoute = window.api.onRouteUpdated((data: any) => {
-      if (data.serial && data.serial !== useDeviceStore.getState().activeDevice) return
-      if (data.location) {
-        setLocation(data.location)
-        setMode('route')
+      if (Object.prototype.hasOwnProperty.call(data ?? {}, 'location')) {
+        applyLocationEvent(data, data.location ? 'route' : 'idle')
       }
       if (data.state) {
         setRouteProgress(data.state.currentWaypointIndex, data.state.progressFraction)

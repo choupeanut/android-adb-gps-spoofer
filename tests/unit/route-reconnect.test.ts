@@ -70,6 +70,26 @@ for (const [runtime, Manager, listen] of [
       expect(new Set(updates.map(e => e.data.serial))).toEqual(new Set(['a', 'b', 'c']))
     })
 
+    it('does not emit a late keep-alive snapshot after route handoff', async () => {
+      const route = manager.getEngines('a').route
+      route.setWaypoints(points)
+      await route.play(['a'], 10)
+      route.pause()
+      const write = delay<boolean>()
+      adb.pushLocation.mockImplementationOnce(() => write.promise)
+
+      const beforeTick = events.length
+      const tickPromise = vi.advanceTimersByTimeAsync(500)
+      await Promise.resolve()
+      route.stopForStay()
+      const afterStop = events.length
+      write.resolve(true)
+      await tickPromise
+
+      expect(events.length).toBe(afterStop)
+      expect(events.slice(beforeTick).at(-1)?.data.location).toBeNull()
+    })
+
     it('keeps peers moving and reconnects a missing member at the current coordinate', async () => {
       await start()
       await tick()

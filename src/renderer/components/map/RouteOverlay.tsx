@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { Polyline, Marker, Tooltip, Circle } from 'react-leaflet'
 import L from 'leaflet'
+import { useMemo } from 'react'
 import { useRouteStore } from '../../stores/route.store'
 
 /** Small numbered marker for waypoints. */
@@ -22,6 +23,10 @@ export function RouteOverlay(): JSX.Element {
   const wanderEnabled = useRouteStore((s) => s.wanderEnabled)
   const wanderRadiusM = useRouteStore((s) => s.wanderRadiusM)
   const playing = useRouteStore((s) => s.playing)
+  const waypointIcons = useMemo(
+    () => controlPoints.map((_, i) => waypointIcon(i, i === 0, i === controlPoints.length - 1)),
+    [controlPoints]
+  )
 
   if (controlPoints.length === 0 && waypoints.length === 0) return <></>
 
@@ -51,7 +56,7 @@ export function RouteOverlay(): JSX.Element {
         <Marker
           key={i}
           position={[wp.lat, wp.lng]}
-          icon={waypointIcon(i, i === 0, i === controlPoints.length - 1)}
+          icon={waypointIcons[i]}
         >
           <Tooltip direction="top" offset={[0, -12]} className="text-[10px]">
             #{i + 1} ({wp.lat.toFixed(4)}, {wp.lng.toFixed(4)})
