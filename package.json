@@ -16,6 +16,7 @@
     "build:web:client": "vite build --config vite.web.config.ts",
     "build:web": "pnpm build:web:server && pnpm build:web:client",
     "start:web": "node dist/server/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.web-server.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },

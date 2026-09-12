@@ -29,4 +29,7 @@ jobs:
         run: pnpm test
 
       - name: Type check
-        run: pnpm exec electron-vite build 2>&1 | head -50 || true
+        run: pnpm typecheck
+
+      - name: Build desktop and Web runtimes
+        run: pnpm build && pnpm build:web

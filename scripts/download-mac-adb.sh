@@ -3,11 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST_DIR="$ROOT_DIR/resources/platform-tools-mac"
-ZIP_PATH="${TMPDIR:-/tmp}/platform-tools-darwin.zip"
-EXTRACT_DIR="${TMPDIR:-/tmp}/platform-tools-darwin"
+DOWNLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gps-adb-darwin.XXXXXXXX")"
+trap 'rm -rf -- "$DOWNLOAD_DIR"' EXIT
+ZIP_PATH="$DOWNLOAD_DIR/platform-tools.zip"
+EXTRACT_DIR="$DOWNLOAD_DIR/extracted"
 
 mkdir -p "$DEST_DIR"
-rm -rf "$EXTRACT_DIR"
+
 
 curl -fsSL https://dl.google.com/android/repository/platform-tools-latest-darwin.zip -o "$ZIP_PATH"
 unzip -q "$ZIP_PATH" -d "$EXTRACT_DIR"

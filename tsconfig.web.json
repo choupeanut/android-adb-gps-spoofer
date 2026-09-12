@@ -2,6 +2,7 @@
   "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
   "include": [
     "src/renderer/**/*",
+    "web/client/**/*",
     "src/shared/**/*"
   ],
   "compilerOptions": {

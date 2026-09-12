@@ -39,6 +39,16 @@ if [ "${APP_PORT}" = "3000" ]; then
   exit 1
 fi
 
+deploy_tmp="$(mktemp -d)"
+trap 'rm -rf -- "$deploy_tmp"' EXIT
+
+for name in "$STACK_NAME" "$OLD_STACK_NAME" "$DATA_VOLUME" "$OLD_DATA_VOLUME"; do
+  [[ "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || { echo "Invalid stack or volume name" >&2; exit 1; }
+done
+[[ "$IMAGE_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9_./:-]*$ && "$IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$ ]] || { echo "Invalid image reference" >&2; exit 1; }
+[[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] && (( 10#$APP_PORT >= 1 && 10#$APP_PORT <= 65535 )) || { echo "Invalid app port" >&2; exit 1; }
+[[ "$PORTAINER_ENDPOINT_ID" =~ ^[0-9]+$ ]] || { echo "Invalid endpoint ID" >&2; exit 1; }
+
 api() {
   curl -fsS -H "X-API-Key: ${PORTAINER_TOKEN}" "$@"
 }
@@ -51,17 +61,17 @@ stack_json="$(api "${PORTAINER_URL}/api/stacks")"
 
 stack_id_for() {
   local name="$1"
-  echo "${stack_json}" | jq -r ".[] | select(.Name == \"${name}\") | .Id" | head -n 1
+  echo "${stack_json}" | jq -r --arg name "$name" '.[] | select(.Name == $name) | .Id' | head -n 1
 }
 
 stack_endpoint_for() {
   local name="$1"
-  echo "${stack_json}" | jq -r ".[] | select(.Name == \"${name}\") | .EndpointId" | head -n 1
+  echo "${stack_json}" | jq -r --arg name "$name" '.[] | select(.Name == $name) | .EndpointId' | head -n 1
 }
 
 if [ "${REMOTE_BUILD}" = "1" ]; then
   echo "Building image on Portainer endpoint ${PORTAINER_ENDPOINT_ID}: ${IMAGE_NAME}:${IMAGE_TAG}"
-  build_context="$(mktemp --suffix=.tar)"
+  build_context="$deploy_tmp/build.tar"
   tar \
     --exclude='.git' \
     --exclude='node_modules' \
@@ -79,9 +89,18 @@ if [ "${REMOTE_BUILD}" = "1" ]; then
     -H "X-API-Key: ${PORTAINER_TOKEN}" \
     -H "Content-Type: application/x-tar" \
     "${PORTAINER_URL}/api/endpoints/${PORTAINER_ENDPOINT_ID}/docker/build?t=${IMAGE_NAME}:${IMAGE_TAG}&dockerfile=Dockerfile" \
-    --data-binary @"${build_context}" >/tmp/portainer-build.log
+    --data-binary @"${build_context}" >"$deploy_tmp/build.log"
   rm -f "${build_context}"
-  tail -n 20 /tmp/portainer-build.log || true
+  if jq -se 'any(.[]; .error != null or .errorDetail != null)' "$deploy_tmp/build.log" >/dev/null; then
+    echo "Remote Docker build failed" >&2
+    tail -n 20 "$deploy_tmp/build.log" >&2
+    exit 1
+  fi
+  if ! jq -se 'length > 0 and any(.[]; (.stream? // "" | test("Successfully (built|tagged)")) or (.aux?.ID? // "" | length > 0))' "$deploy_tmp/build.log" >/dev/null; then
+    echo "Remote Docker build did not report completion" >&2
+    exit 1
+  fi
+  tail -n 20 "$deploy_tmp/build.log"
 fi
 
 new_stack_id="$(stack_id_for "${STACK_NAME}")"
@@ -89,8 +108,13 @@ old_stack_id="$(stack_id_for "${OLD_STACK_NAME}")"
 old_stack_endpoint="$(stack_endpoint_for "${OLD_STACK_NAME}")"
 
 if [ "${MIGRATE_OLD_STACK}" = "1" ] && [ -n "${old_stack_id}" ] && [ "${OLD_STACK_NAME}" != "${STACK_NAME}" ]; then
+  if [ "$old_stack_endpoint" != "$PORTAINER_ENDPOINT_ID" ]; then
+    echo "Cross-endpoint volume migration is unsupported; no stacks changed" >&2
+    exit 1
+  fi
+  api "${PORTAINER_URL}/api/endpoints/${PORTAINER_ENDPOINT_ID}/docker/volumes/${OLD_DATA_VOLUME}" >/dev/null
   echo "Stopping old stack ${OLD_STACK_NAME} (ID ${old_stack_id})"
-  api -X POST "${PORTAINER_URL}/api/stacks/${old_stack_id}/stop?endpointId=${old_stack_endpoint}" >/dev/null || true
+  api -X POST "${PORTAINER_URL}/api/stacks/${old_stack_id}/stop?endpointId=${old_stack_endpoint}" >/dev/null
 
   echo "Migrating data volume ${OLD_DATA_VOLUME} -> ${DATA_VOLUME}"
   api_json -X POST \
@@ -101,21 +125,18 @@ if [ "${MIGRATE_OLD_STACK}" = "1" ] && [ -n "${old_stack_id}" ] && [ "${OLD_STAC
     "${PORTAINER_URL}/api/endpoints/${PORTAINER_ENDPOINT_ID}/docker/images/create?fromImage=alpine&tag=3.20" >/dev/null || true
 
   migrate_name="gps-spoofer-data-migrate-$(date +%s)"
+  migration_command='set -eu; test -f /old/pikmin-keep.db; if [ -e /new/.gps-migration-in-progress ]; then echo "Incomplete earlier migration: restore or recover destination before retry" >&2; exit 1; fi; if [ -f /new/pikmin-keep.db ]; then echo "Existing destination preserved"; else touch /new/.gps-migration-in-progress; cp -a /old/. /new/; rm /new/.gps-migration-in-progress; fi'
+  migration_payload="$(jq -n --arg command "$migration_command" --arg source "$OLD_DATA_VOLUME" --arg destination "$DATA_VOLUME" '{Image:"alpine:3.20", Cmd:["sh","-c",$command], HostConfig:{Mounts:[{Type:"volume",Source:$source,Target:"/old",ReadOnly:true},{Type:"volume",Source:$destination,Target:"/new"}]}}')"
   create_response="$(api_json -X POST \
     "${PORTAINER_URL}/api/endpoints/${PORTAINER_ENDPOINT_ID}/docker/containers/create?name=${migrate_name}" \
-    -d "{
-      \"Image\":\"alpine:3.20\",
-      \"Cmd\":[\"sh\",\"-c\",\"if [ -f /new/pikmin-keep.db ]; then echo 'new volume already has database'; else cp -a /old/. /new/ 2>/dev/null || true; fi\"],
-      \"HostConfig\":{
-        \"Mounts\":[
-          {\"Type\":\"volume\",\"Source\":\"${OLD_DATA_VOLUME}\",\"Target\":\"/old\",\"ReadOnly\":true},
-          {\"Type\":\"volume\",\"Source\":\"${DATA_VOLUME}\",\"Target\":\"/new\"}
-        ]
-      }
-    }")"
+    -d "$migration_payload")"
   migrate_id="$(echo "${create_response}" | jq -r '.Id')"
   api -X POST "${PORTAINER_URL}/api/endpoints/${PORTAINER_ENDPOINT_ID}/docker/containers/${migrate_id}/start" >/dev/null
-  api -X POST "${PORTAINER_URL}/api/endpoints/${PORTAINER_ENDPOINT_ID}/docker/containers/${migrate_id}/wait" >/dev/null
+  wait_result="$(api -X POST "${PORTAINER_URL}/api/endpoints/${PORTAINER_ENDPOINT_ID}/docker/containers/${migrate_id}/wait")"
+  if ! jq -e '.StatusCode == 0 and (.Error == null)' <<< "$wait_result" >/dev/null; then
+    echo "Data migration failed; replacement stack was not deployed" >&2
+    exit 1
+  fi
   api "${PORTAINER_URL}/api/endpoints/${PORTAINER_ENDPOINT_ID}/docker/containers/${migrate_id}/logs?stdout=1&stderr=1" || true
   api -X DELETE "${PORTAINER_URL}/api/endpoints/${PORTAINER_ENDPOINT_ID}/docker/containers/${migrate_id}?force=1" >/dev/null || true
 fi
@@ -124,7 +145,7 @@ api_json -X POST \
   "${PORTAINER_URL}/api/endpoints/${PORTAINER_ENDPOINT_ID}/docker/volumes/create" \
   -d "{\"Name\":\"${DATA_VOLUME}\"}" >/dev/null || true
 
-compose_file="$(mktemp --suffix=.yml)"
+compose_file="$deploy_tmp/compose.yml"
 cat > "${compose_file}" <<EOF
 version: '3.8'
 

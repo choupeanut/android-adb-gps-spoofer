@@ -105,14 +105,6 @@ jobs:
       - name: Inject version into package.json
         run: npm pkg set version=${{ steps.version.outputs.VERSION }}
 
-      - name: Download Linux ADB binary
-        run: |
-          mkdir -p resources/platform-tools-linux
-          curl -fsSL https://dl.google.com/android/repository/platform-tools-latest-linux.zip -o /tmp/pt.zip
-          unzip -j /tmp/pt.zip platform-tools/adb -d resources/platform-tools-linux/
-          chmod +x resources/platform-tools-linux/adb
-          echo "ADB version: $(resources/platform-tools-linux/adb version)"
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -188,7 +180,6 @@ jobs:
   # ── Web server Docker image ────────────────────────────────────────────
   build-docker:
     runs-on: ubuntu-latest
-    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
@@ -222,7 +213,7 @@ jobs:
   # ── Create GitHub Release ──────────────────────────────────────────────
   create-release:
     needs: [build-desktop, build-linux, build-mac, build-docker]
-    if: always() && needs.build-desktop.result == 'success' && needs.build-linux.result == 'success' && needs.build-mac.result == 'success'
+    if: always() && needs.build-desktop.result == 'success' && needs.build-linux.result == 'success' && needs.build-mac.result == 'success' && needs.build-docker.result == 'success'
     runs-on: ubuntu-latest
 
     steps:
