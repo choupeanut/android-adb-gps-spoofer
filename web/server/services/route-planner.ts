@@ -1,3 +1,5 @@
+import { assertBoolean, assertCoordinates, assertNumber, assertWaypoints, MAX_CONTROL_POINTS } from '../../../src/shared/runtime-validation'
+import { sampleRoute } from '../../../src/shared/gpx'
 import { haversineDistance } from './coordinates'
 import type {
   RoutePlanLegSummary,
@@ -10,6 +12,7 @@ import type {
 const DEFAULT_OSRM_BASE_URL = 'https://router.project-osrm.org'
 const ROUTE_TIMEOUT_MS = 8000
 const MAX_PLANNED_POINTS = 2500
+const MAX_GEOMETRY_POINTS = 100_000
 const CONNECTOR_STEP_M = 25
 const CONNECTOR_WARN_KM = 0.1
 
@@ -45,10 +48,29 @@ export class RoutePlannerService {
   ) {}
 
   async planRoadNetwork(request: RoutePlanRoadRequest): Promise<RoutePlanRoadResponse> {
-    if (!Array.isArray(request.controlPoints) || request.controlPoints.length < 2) {
+    if (!request || !Array.isArray(request.controlPoints) || request.controlPoints.length < 2) {
       throw new Error('Road-network mode requires at least 2 control points')
     }
+    assertWaypoints(request.controlPoints, MAX_CONTROL_POINTS)
+    assertBoolean(request.loop)
+    if (!['walk', 'cycle', 'drive'].includes(request.profile)) throw new Error('Invalid route profile')
+    const controller = new AbortController()
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort()
+        reject(new Error('Routing API timeout'))
+      }, ROUTE_TIMEOUT_MS)
+    })
+    try {
+      return await Promise.race([this.planValidated(request, controller.signal), deadline])
+    } finally {
+      clearTimeout(timeout)
+      controller.abort()
+    }
+  }
 
+  private async planValidated(request: RoutePlanRoadRequest, signal: AbortSignal): Promise<RoutePlanRoadResponse> {
     const legs = buildLegPairs(request.controlPoints.length, request.loop)
     const warnings: string[] = []
     const summaries: RoutePlanLegSummary[] = []
@@ -58,9 +80,10 @@ export class RoutePlannerService {
     let totalDurationSec = 0
 
     for (const [fromIndex, toIndex] of legs) {
+      if (signal.aborted) throw new Error('Routing API timeout')
       const from = request.controlPoints[fromIndex]
       const to = request.controlPoints[toIndex]
-      const plannedLeg = await this.planLeg(from, to, fromIndex, toIndex, request.profile)
+      const plannedLeg = await this.planLeg(from, to, fromIndex, toIndex, request.profile, signal)
       summaries.push(plannedLeg.summary)
 
       totalDistanceKm += plannedLeg.summary.distanceKm
@@ -84,6 +107,8 @@ export class RoutePlannerService {
       appendUnique(mergedWaypoints, to)
     }
 
+    assertNumber(totalDistanceKm, 'total route distance', 0)
+    assertNumber(totalDurationSec, 'total route duration', 0)
     const plannedWaypoints = downsample(mergedWaypoints, MAX_PLANNED_POINTS)
     if (plannedWaypoints.length < 2) {
       throw new Error('Road-network planner returned an empty route')
@@ -103,20 +128,19 @@ export class RoutePlannerService {
     to: RouteWaypoint,
     fromIndex: number,
     toIndex: number,
-    profile: RouteProfile
+    profile: RouteProfile,
+    signal: AbortSignal
   ): Promise<PlannedLeg> {
     const osrmProfile = OSRM_PROFILE_MAP[profile]
     const url = `${this.baseUrl}/route/v1/${osrmProfile}/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&steps=false&annotations=false`
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), ROUTE_TIMEOUT_MS)
-
     let body: any
     let status = 0
     try {
-      const res = await this.fetchImpl(url, { signal: controller.signal })
+      const res = await this.fetchImpl(url, { signal })
       status = res.status
       body = await res.json()
+      if (signal.aborted) throw new Error('Routing API timeout')
       if (!res.ok) {
         throw new Error(body?.message || `Routing API error (${res.status})`)
       }
@@ -128,8 +152,6 @@ export class RoutePlannerService {
         throw new Error('Routing API rate-limited (429)')
       }
       throw new Error(`Route planning failed: ${error?.message || 'unknown error'}`)
-    } finally {
-      clearTimeout(timeout)
     }
 
     if (body?.code !== 'Ok' || !Array.isArray(body?.routes) || body.routes.length === 0) {
@@ -138,9 +160,16 @@ export class RoutePlannerService {
 
     const route = body.routes[0]
     const coordinates = route?.geometry?.coordinates as Array<[number, number]> | undefined
-    if (!Array.isArray(coordinates) || coordinates.length < 2) {
+    if (!Array.isArray(coordinates) || coordinates.length < 2 || coordinates.length > MAX_GEOMETRY_POINTS) {
       throw new Error(`Invalid route geometry between control points #${fromIndex + 1} and #${toIndex + 1}`)
     }
+
+    for (const coordinate of coordinates) {
+      if (!Array.isArray(coordinate) || coordinate.length < 2) throw new Error('Invalid route geometry')
+      assertCoordinates(coordinate[1], coordinate[0])
+    }
+    if (route.distance != null) assertNumber(route.distance, 'route distance', 0)
+    if (route.duration != null) assertNumber(route.duration, 'route duration', 0)
 
     const snappedStart: RouteWaypoint = { lat: coordinates[0][1], lng: coordinates[0][0] }
     const snappedEnd: RouteWaypoint = {
@@ -157,7 +186,7 @@ export class RoutePlannerService {
       appendUnique(legWaypoints, point)
     }
 
-    for (const coordinate of coordinates) {
+    for (const coordinate of sampleRoute(coordinates)) {
       appendUnique(legWaypoints, { lat: coordinate[1], lng: coordinate[0] })
     }
 
@@ -206,7 +235,7 @@ function buildConnector(from: RouteWaypoint, to: RouteWaypoint): RouteWaypoint[]
     return [from, to]
   }
 
-  const steps = Math.max(1, Math.ceil(distanceM / CONNECTOR_STEP_M))
+  const steps = Math.min(MAX_PLANNED_POINTS - 1, Math.max(1, Math.ceil(distanceM / CONNECTOR_STEP_M)))
   const points: RouteWaypoint[] = []
   for (let i = 0; i <= steps; i++) {
     const t = i / steps
@@ -219,15 +248,7 @@ function buildConnector(from: RouteWaypoint, to: RouteWaypoint): RouteWaypoint[]
 }
 
 function downsample(points: RouteWaypoint[], maxPoints: number): RouteWaypoint[] {
-  if (points.length <= maxPoints) return points
-
-  const step = Math.ceil(points.length / maxPoints)
-  const sampled = points.filter((_, i) => i % step === 0)
-  const last = points[points.length - 1]
-  if (!isSamePoint(sampled[sampled.length - 1], last)) {
-    sampled.push(last)
-  }
-  return sampled
+  return sampleRoute(points, maxPoints)
 }
 
 function appendUnique(target: RouteWaypoint[], point: RouteWaypoint): void {

@@ -77,12 +77,16 @@ for (const [runtime, Engine, listen] of [
 
       let releaseOldPush!: (ok: boolean) => void
       const oldPush = new Promise<boolean>((resolve) => { releaseOldPush = resolve })
+      let markStarted!: () => void
+      const started = new Promise<void>((resolve) => { markStarted = resolve })
       mockAdb.pushLocation.mockImplementation((_serial: string, loc: { lat: number }) => {
-        return Math.abs(loc.lat - 25.034) < 1e-9 ? Promise.resolve(true) : oldPush
+        if (Math.abs(loc.lat - 25.034) < 1e-9) return Promise.resolve(true)
+        markStarted()
+        return oldPush
       })
 
       const oldTick = vi.advanceTimersByTimeAsync(500)
-      await Promise.resolve()
+      await started
       const nextTeleport = engine.teleport(['device-1'], 25.034, 121.5645)
       await Promise.resolve()
       releaseOldPush(true)

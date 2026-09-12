@@ -1,3 +1,4 @@
+import { assertCoordinates } from '@shared/runtime-validation'
 /**
  * Standalone Database — uses DATA_DIR env var instead of Electron's app.getPath().
  */
@@ -78,12 +79,17 @@ export class Database {
   }
 
   getHistory(): Array<{ id: number; lat: number; lng: number; visited_at: string }> {
-    return this.db.prepare('SELECT * FROM location_history ORDER BY visited_at DESC LIMIT ?').all(MAX_HISTORY) as any[]
+    return this.db.prepare('SELECT * FROM location_history ORDER BY visited_at DESC, id DESC LIMIT ?').all(MAX_HISTORY) as any[]
   }
 
   addHistory(lat: number, lng: number): void {
-    this.db.prepare('INSERT INTO location_history (lat, lng) VALUES (?, ?)').run(lat, lng)
-    this.db.prepare('DELETE FROM location_history WHERE id NOT IN (SELECT id FROM location_history ORDER BY visited_at DESC LIMIT ?)').run(MAX_HISTORY)
+    assertCoordinates(lat, lng)
+    const db = this.db
+    if (!db) return
+    db.transaction(() => {
+      db.prepare('INSERT INTO location_history (lat, lng) VALUES (?, ?)').run(lat, lng)
+      db.prepare('DELETE FROM location_history WHERE id NOT IN (SELECT id FROM location_history ORDER BY visited_at DESC, id DESC LIMIT ?)').run(MAX_HISTORY)
+    })()
   }
 
   getWifiIpHistory(): WifiIpHistoryEntry[] {

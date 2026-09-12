@@ -76,11 +76,12 @@ for (const [runtime, Manager, listen] of [
       await route.play(['a'], 10)
       route.pause()
       const write = delay<boolean>()
-      adb.pushLocation.mockImplementationOnce(() => write.promise)
+      const started = delay<void>()
+      adb.pushLocation.mockImplementationOnce(() => { started.resolve(); return write.promise })
 
       const beforeTick = events.length
       const tickPromise = vi.advanceTimersByTimeAsync(500)
-      await Promise.resolve()
+      await started.promise
       route.stopForStay()
       const afterStop = events.length
       write.resolve(true)

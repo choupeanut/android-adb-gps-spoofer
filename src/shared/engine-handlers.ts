@@ -1,3 +1,4 @@
+import { assertBoolean, assertCoordinates, assertNumber, assertSerial, assertSerials, assertWaypoints } from './runtime-validation'
 import type { LocationControl, RouteControl, SharedDeviceEngineManager } from './device-engine-manager'
 import type { RouteWaypoint } from './types'
 
@@ -9,7 +10,10 @@ export function registerEngineHandlers<L extends LocationControl, R extends Rout
   manager: SharedDeviceEngineManager<L, R>,
   restoreMaster: (serial: string) => Promise<unknown>
 ): void {
-  const targets = (serials?: string[]): string[] => serials ?? manager.getActiveSerials()
+  const targets = (serials?: string[]): string[] => {
+    if (serials !== undefined) assertSerials(serials)
+    return serials ?? manager.getActiveSerials()
+  }
   const leave = (serial: string) => {
     const loc = manager.detachRoute(serial)
     const pair = manager.getEngines(serial)
@@ -19,6 +23,8 @@ export function registerEngineHandlers<L extends LocationControl, R extends Rout
   }
 
   handle('teleport', async (serials: string[], lat: number, lng: number) => {
+    assertSerials(serials)
+    assertCoordinates(lat, lng)
     const results = await Promise.all(serials.map(async (serial) => {
       const { pair } = leave(serial)
       await manager.settleRecovery(serial)
@@ -27,6 +33,7 @@ export function registerEngineHandlers<L extends LocationControl, R extends Rout
     return results.every(Boolean)
   })
   handle('start-joystick', async (serials: string[]) => {
+    assertSerials(serials)
     await Promise.all(serials.map(async (serial) => {
       const { loc, pair } = leave(serial)
       await manager.settleRecovery(serial)
@@ -37,6 +44,7 @@ export function registerEngineHandlers<L extends LocationControl, R extends Rout
     return true
   })
   handle('stop-joystick', (serials?: string[]) => {
+    if (serials !== undefined) assertSerials(serials)
     for (const serial of targets(serials)) {
       const location = manager.peekEngines(serial)?.location
       if (location?.getMode() === 'joystick') {
@@ -48,6 +56,10 @@ export function registerEngineHandlers<L extends LocationControl, R extends Rout
     return true
   })
   handle('update-position', (lat: number, lng: number, brg: number, speed: number, serials?: string[]) => {
+    if (serials !== undefined) assertSerials(serials)
+    assertCoordinates(lat, lng)
+    assertNumber(brg, 'bearing')
+    assertNumber(speed, 'speed', 0)
     for (const serial of targets(serials)) {
       const location = manager.peekEngines(serial)?.location
       if (location?.getMode() === 'joystick') location.updatePosition(lat, lng, brg, speed)
@@ -55,6 +67,7 @@ export function registerEngineHandlers<L extends LocationControl, R extends Rout
     return true
   })
   handle('stop-spoofing', async (serials: string[]) => {
+    assertSerials(serials)
     await Promise.all(serials.map(async (serial) => {
       const { pair } = leave(serial)
       await manager.settleRecovery(serial)
@@ -63,6 +76,8 @@ export function registerEngineHandlers<L extends LocationControl, R extends Rout
     return true
   })
   handle('stop-spoofing-graceful', async (serials: string[], lat: number, lng: number) => {
+    assertSerials(serials)
+    assertCoordinates(lat, lng)
     await Promise.all(serials.map(async (serial) => {
       const { loc, pair } = leave(serial)
       await manager.settleRecovery(serial)
@@ -72,28 +87,37 @@ export function registerEngineHandlers<L extends LocationControl, R extends Rout
     return true
   })
   handle('get-location-state', (serial?: string) => {
+    if (serial !== undefined) assertSerial(serial)
     const pair = manager.peekEngines(serial ?? manager.getActiveSerials()[0])
     if (!pair) return { location: null, mode: 'idle' }
     const routeLoc = pair.route.getCurrentLocation()
     return { location: routeLoc ?? pair.location.getCurrentLocation(), mode: routeLoc ? 'route' : pair.location.getMode() }
   })
   handle('stop-all', async (mode: 'stay' | 'graceful' | 'immediate') => {
+    if (!['stay', 'graceful', 'immediate'].includes(mode)) throw new Error('Invalid stop mode')
     await manager.stopAll(mode)
     return true
   })
   handle('route-set-waypoints', (points: RouteWaypoint[], serials?: string[]) => {
+    if (serials !== undefined) assertSerials(serials)
+    assertWaypoints(points)
     manager.setWaypoints(points, targets(serials))
     return true
   })
   handle('route-play', async (serials: string[], speed: number, lat?: number, lng?: number) => {
+    assertSerials(serials)
+    assertNumber(speed, 'speed', 0)
+    if (lat !== undefined || lng !== undefined) assertCoordinates(lat, lng)
     await manager.playRoute(serials, speed, lat, lng)
     return true
   })
   handle('route-pause', (serials?: string[]) => {
+    if (serials !== undefined) assertSerials(serials)
     for (const route of manager.getRoutes(targets(serials))) route.pause()
     return true
   })
   handle('route-stop', async (serials?: string[]) => {
+    if (serials !== undefined) assertSerials(serials)
     await Promise.all(targets(serials).map(async (serial) => {
       const { pair } = leave(serial)
       await manager.settleRecovery(serial)
@@ -103,6 +127,7 @@ export function registerEngineHandlers<L extends LocationControl, R extends Rout
     return true
   })
   handle('route-stop-stay', async (serials?: string[]) => {
+    if (serials !== undefined) assertSerials(serials)
     const results = await Promise.all(targets(serials).map(async (serial) => {
       const { loc, pair } = leave(serial)
       await manager.settleRecovery(serial)
@@ -112,25 +137,38 @@ export function registerEngineHandlers<L extends LocationControl, R extends Rout
     return results.every(Boolean)
   })
   handle('route-return-to-gps', (lat: number, lng: number, speed: number, serials?: string[]) => {
+    if (serials !== undefined) assertSerials(serials)
+    assertCoordinates(lat, lng)
+    assertNumber(speed, 'speed', 0)
     for (const route of manager.getRoutes(targets(serials))) route.returnToRealGps(lat, lng, speed)
     return true
   })
   handle('route-get-state', (serial?: string) => {
+    if (serial !== undefined) assertSerial(serial)
     return manager.peekEngines(serial ?? manager.getActiveSerials()[0])?.route.getState() ?? null
   })
   handle('route-set-loop', (loop: boolean, serials?: string[]) => {
+    if (serials !== undefined) assertSerials(serials)
+    assertBoolean(loop)
     for (const route of manager.getRoutes(targets(serials))) route.setLoop(loop)
     return true
   })
   handle('route-set-wander', (enabled: boolean, radius: number, serials?: string[]) => {
+    if (serials !== undefined) assertSerials(serials)
+    assertBoolean(enabled)
+    assertNumber(radius, 'wander radius', 0)
     for (const route of manager.getRoutes(targets(serials))) route.setWanderEnabled(enabled, radius)
     return true
   })
   handle('route-set-speed', (speed: number, serials?: string[]) => {
+    if (serials !== undefined) assertSerials(serials)
+    assertNumber(speed, 'speed', 0)
     for (const route of manager.getRoutes(targets(serials))) route.setSpeed(speed)
     return true
   })
   handle('route-set-fixed-speed', (enabled: boolean, serials?: string[]) => {
+    if (serials !== undefined) assertSerials(serials)
+    assertBoolean(enabled)
     for (const route of manager.getRoutes(targets(serials))) route.setFixedSpeed(enabled)
     return true
   })

@@ -1,3 +1,4 @@
+import { assertBoolean, assertLocationUpdate, assertNumber, assertSerial } from '../../../src/shared/runtime-validation'
 /**
  * Standalone ADB service — no Electron dependencies.
  * Uses findAdb() that doesn't depend on @electron-toolkit/utils.
@@ -36,6 +37,7 @@ export class AdbService {
    * from killing the ADB TCP connection.
    */
   async hardenWifiConnection(serial: string): Promise<void> {
+    assertSerial(serial)
     if (this.wifiHardened.has(serial)) return
     if (!serial.includes(':')) return // USB device, skip
     try {
@@ -58,6 +60,7 @@ export class AdbService {
 
   /** Attempt to reconnect a WiFi ADB device */
   async reconnectWifi(serial: string): Promise<boolean> {
+    assertSerial(serial)
     if (!serial.includes(':')) return false
     const ip = serial.split(':')[0]
     const port = serial.split(':')[1] || '5555'
@@ -77,6 +80,8 @@ export class AdbService {
   }
 
   async setMasterLocationEnabled(serial: string, enabled: boolean): Promise<boolean> {
+    assertSerial(serial)
+    assertBoolean(enabled)
     try {
       await execFileAsync(
         this.adbPath,
@@ -100,6 +105,7 @@ export class AdbService {
   }
 
   async maybeDisableMasterLocationForSpoof(serial: string): Promise<void> {
+    assertSerial(serial)
     if (!this.isExperimentalMasterLocationToggleEnabled()) return
     if (this.masterLocationForcedOff.has(serial)) return
     const ok = await this.setMasterLocationEnabled(serial, false)
@@ -110,6 +116,7 @@ export class AdbService {
   }
 
   async maybeRestoreMasterLocation(serial: string): Promise<void> {
+    assertSerial(serial)
     if (!this.masterLocationForcedOff.has(serial)) return
     const ok = await this.setMasterLocationEnabled(serial, true)
     if (ok) {
@@ -165,6 +172,7 @@ export class AdbService {
   }
 
   async testConnection(serial: string): Promise<{ ok: boolean; latencyMs: number; message: string }> {
+    assertSerial(serial)
     const start = Date.now()
     log('info', `[TestADB] pinging ${serial}...`)
     try {
@@ -186,6 +194,7 @@ export class AdbService {
   }
 
   async enableMockLocation(serial: string): Promise<{ ok: boolean; log: string[] }> {
+    assertSerial(serial)
     const logLines: string[] = []
     let ok = true
 
@@ -237,6 +246,7 @@ export class AdbService {
   }
 
   async pushLocation(serial: string, loc: LocationUpdate): Promise<boolean> {
+    assertLocationUpdate(serial, loc)
     try {
       await execFileAsync(
         this.adbPath,
@@ -273,6 +283,7 @@ export class AdbService {
   }
 
   async removeTestProvider(serial: string): Promise<void> {
+    assertSerial(serial)
     try {
       await execFileAsync(
         this.adbPath,
@@ -283,6 +294,9 @@ export class AdbService {
   }
 
   async connectWifi(ip: string, port = 5555): Promise<boolean> {
+    assertSerial(ip)
+    assertNumber(port, 'ADB port', 1, 65535)
+    if (!Number.isInteger(port)) throw new Error('Invalid ADB port')
     try {
       const { stdout } = await execFileAsync(this.adbPath, ['connect', `${ip}:${port}`], { timeout: 10000 })
       log('info', `[ADB] connect ${ip}:${port} → ${stdout.trim()}`)
@@ -294,6 +308,9 @@ export class AdbService {
   }
 
   async enableTcpip(serial: string, port = 5555): Promise<boolean> {
+    assertSerial(serial)
+    assertNumber(port, 'ADB port', 1, 65535)
+    if (!Number.isInteger(port)) throw new Error('Invalid ADB port')
     try {
       await execFileAsync(this.adbPath, ['-s', serial, 'tcpip', String(port)], { timeout: 5000 })
       return true
@@ -303,6 +320,7 @@ export class AdbService {
   }
 
   async getDeviceIp(serial: string): Promise<string | null> {
+    assertSerial(serial)
     try {
       const { stdout } = await execFileAsync(
         this.adbPath,
@@ -317,6 +335,7 @@ export class AdbService {
   }
 
   async getRealLocation(serial: string): Promise<{ lat: number; lng: number } | null> {
+    assertSerial(serial)
     const safeRun = async (args: string[]): Promise<string> => {
       try {
         const { stdout } = await execFileAsync(this.adbPath, args, { timeout: 6000 })

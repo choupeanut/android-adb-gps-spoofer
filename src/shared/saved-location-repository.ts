@@ -11,7 +11,8 @@ const SAVED_LOCATION_COLUMNS = `
   last_used_at AS lastUsedAt
 `
 
-export function normalizeSavedLocationName(name: string): string | null {
+export function normalizeSavedLocationName(name: unknown): string | null {
+  if (typeof name !== 'string') return null
   const trimmed = name.trim()
   return trimmed.length >= 1 && trimmed.length <= 80 ? trimmed : null
 }

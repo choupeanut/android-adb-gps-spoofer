@@ -9,7 +9,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import cors from 'cors'
 import { resolve, join } from 'path'
 import { mkdirSync } from 'fs'
-import { XMLParser } from 'fast-xml-parser'
+import { parseGpx } from '../../src/shared/gpx'
 
 import { addBroadcastListener } from './broadcast'
 import { log, getLogs } from './logger'
@@ -219,45 +219,7 @@ app.post('/api/call', async (req, res) => {
 // GPX upload endpoint
 app.post('/api/gpx/parse', (req, res) => {
   try {
-    const { content } = req.body
-    const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' })
-    const parsed = parser.parse(content)
-    const gpx = parsed.gpx
-    if (!gpx) { res.json([]); return }
-
-    const waypoints: RouteWaypoint[] = []
-    const trk = gpx.trk
-    if (trk) {
-      const trkArray = Array.isArray(trk) ? trk : [trk]
-      for (const track of trkArray) {
-        const trkseg = track.trkseg
-        const segments = Array.isArray(trkseg) ? trkseg : [trkseg]
-        for (const seg of segments) {
-          const trkpts = seg?.trkpt
-          if (!trkpts) continue
-          const pts = Array.isArray(trkpts) ? trkpts : [trkpts]
-          for (const pt of pts) {
-            const lat = parseFloat(pt['@_lat']), lng = parseFloat(pt['@_lon'])
-            if (!isNaN(lat) && !isNaN(lng))
-              waypoints.push({ lat, lng, altitude: pt.ele ? parseFloat(pt.ele) : 0 })
-          }
-        }
-      }
-    }
-    if (waypoints.length === 0 && gpx.wpt) {
-      const wpts = Array.isArray(gpx.wpt) ? gpx.wpt : [gpx.wpt]
-      for (const wpt of wpts) {
-        const lat = parseFloat(wpt['@_lat']), lng = parseFloat(wpt['@_lon'])
-        if (!isNaN(lat) && !isNaN(lng))
-          waypoints.push({ lat, lng, altitude: wpt.ele ? parseFloat(wpt.ele) : 0 })
-      }
-    }
-    if (waypoints.length > 1000) {
-      const step = Math.ceil(waypoints.length / 1000)
-      res.json(waypoints.filter((_, i) => i % step === 0))
-      return
-    }
-    res.json(waypoints)
+    res.json(parseGpx(req.body?.content))
   } catch (err: any) {
     res.status(400).json({ error: err.message })
   }
