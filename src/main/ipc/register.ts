@@ -1,3 +1,4 @@
+import { CommandGate } from '../../shared/command-gate'
 import { registerEngineHandlers } from '@shared/engine-handlers'
 import { ipcMain, app } from 'electron'
 import { DeviceManager } from '../services/device-manager'
@@ -11,18 +12,21 @@ import { log } from '../logger'
 import { resolveGoogleMapsLink } from '@shared/google-maps-link'
 import type { RoutePlanRoadRequest } from '@shared/types'
 
+const commandGate = new CommandGate()
+
 /**
  * Register a handler for both Electron IPC and WebSocket.
  * The IPC handler receives (_event, ...args); the web handler receives (...args) directly.
  */
 function handle(channel: string, handler: (...args: any[]) => any): void {
   // Electron IPC: first arg is the event object
-  ipcMain.handle(channel, (_event, ...args) => handler(...args))
+  const guarded = (...args: any[]) => commandGate.run(() => handler(...args))
+  ipcMain.handle(channel, (_event, ...args) => guarded(...args))
   // WebSocket: receives args directly (no event object)
-  registerHandler(channel, handler)
+  registerHandler(channel, guarded)
 }
 
-export function registerIpcHandlers(deviceManager: DeviceManager): void {
+export function registerIpcHandlers(deviceManager: DeviceManager): () => Promise<void> {
   const engineManager = new DeviceEngineManager(deviceManager.adbService)
   const routePlanner = new RoutePlannerService()
 
@@ -47,7 +51,7 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
 
   // ─── App info ─────────────────────────────────────────────────────────────
 
-  ipcMain.handle('get-app-version', () => app.getVersion())
+  handle('get-app-version', () => app.getVersion())
 
   // ─── Device ──────────────────────────────────────────────────────────────
 
@@ -193,4 +197,9 @@ export function registerIpcHandlers(deviceManager: DeviceManager): void {
   // ─── Logs ─────────────────────────────────────────────────────────────────
   handle('get-logs', () => getLogs())
   handle('get-log-dir', () => getLogDir())
+  return async () => {
+    await commandGate.closeAndDrain()
+    try { await engineManager.stopAll('immediate') }
+    finally { engineManager.dispose(); db.close() }
+  }
 }

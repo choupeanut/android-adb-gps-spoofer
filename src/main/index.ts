@@ -9,6 +9,9 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let deviceManager: DeviceManager | null = null
 let isQuitting = false
+let shutdownComplete = false
+let cleanupRuntime: (() => Promise<void>) | undefined
+let embeddedServer: ReturnType<typeof startWebServer> | undefined
 
 // Safe logging wrapper - never crash if logging fails
 function setupLogging(): void {
@@ -88,7 +91,6 @@ function createTray(): void {
     {
       label: 'Quit',
       click: () => {
-        deviceManager?.dispose()
         app.quit()
       }
     }
@@ -221,7 +223,7 @@ app.whenReady().then(() => {
     deviceManager = new DeviceManager()
     
     console.log('Registering IPC handlers...')
-    registerIpcHandlers(deviceManager)
+    cleanupRuntime = registerIpcHandlers(deviceManager)
 
     console.log('Creating window and tray...')
     createWindow()
@@ -231,7 +233,7 @@ app.whenReady().then(() => {
     try {
       const rendererDir = join(__dirname, '../renderer')
       console.log('Starting web server with renderer dir:', rendererDir)
-      startWebServer(rendererDir)
+      embeddedServer = startWebServer(rendererDir)
     } catch (error) {
       console.warn('Failed to start web server (non-fatal):', error)
     }
@@ -250,12 +252,26 @@ app.whenReady().then(() => {
   app.quit()
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (shutdownComplete) return
+  event.preventDefault()
+  if (isQuitting) return
   isQuitting = true
+  deviceManager?.stopPolling()
+  embeddedServer?.close()
+  let deadline: ReturnType<typeof setTimeout>
+  void Promise.race([
+    cleanupRuntime?.() ?? Promise.resolve(),
+    new Promise<void>((resolve) => { deadline = setTimeout(() => { console.warn('GPS cleanup exceeded 60 seconds; exiting'); resolve() }, 60000) })
+  ]).catch((error) => console.warn('GPS cleanup failed:', error)).finally(() => {
+    clearTimeout(deadline)
+    deviceManager?.dispose()
+    shutdownComplete = true
+    app.quit()
+  })
 })
 
 app.on('window-all-closed', () => {
-  deviceManager?.dispose()
   if (process.platform !== 'darwin') {
     app.quit()
   }

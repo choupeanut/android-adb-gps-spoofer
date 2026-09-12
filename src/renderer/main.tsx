@@ -64,7 +64,9 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-const root = document.getElementById('root')
+async function bootstrap(): Promise<void> {
+  if (!window.api) await import('../../web/client/web-api')
+  const root = document.getElementById('root')
 if (!root) {
   document.body.innerHTML = '<div style="color: #fff; padding: 20px;">Error: Root element not found</div>'
 } else {
@@ -77,4 +79,6 @@ if (!root) {
   )
 }
 
-console.log('Renderer initialized')
+  console.log('Renderer initialized')
+}
+void bootstrap().catch((error) => { console.error('Renderer initialization failed', error) })

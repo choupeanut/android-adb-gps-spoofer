@@ -7,6 +7,7 @@ import { ADB_POLL_INTERVAL_MS } from '@shared/constants'
 import type { DeviceInfo } from '@shared/types'
 
 export class DeviceManager {
+  private stopped = false
   private adb: AdbService
   private devices: DeviceInfo[] = []
   private pollTimer: ReturnType<typeof setInterval> | null = null
@@ -37,7 +38,9 @@ export class DeviceManager {
   }
 
   private async readDevices(): Promise<void> {
+    if (this.stopped) return
     const newDevices = await this.adb.listDevices()
+    if (this.stopped) return
     const oldSerials = new Set(this.devices.map((d) => d.serial))
     const newSerials = new Set(newDevices.map((d) => d.serial))
     const added = newDevices.filter((d) => !oldSerials.has(d.serial))
@@ -90,11 +93,16 @@ export class DeviceManager {
     this.changeListeners.push(cb)
   }
 
-  dispose(): void {
+  stopPolling(): void {
+    this.stopped = true
     if (this.pollTimer) {
       clearInterval(this.pollTimer)
       this.pollTimer = null
     }
+  }
+
+  dispose(): void {
+    this.stopPolling()
     this.adb.dispose()
   }
 }

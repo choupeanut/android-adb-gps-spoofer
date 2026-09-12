@@ -1,3 +1,5 @@
+import { CommandGate } from '../../src/shared/command-gate'
+import { assertCall } from '../../src/shared/rpc'
 import { registerEngineHandlers } from '@shared/engine-handlers'
 /**
  * Android ADB GPS Spoofer — Standalone Web Server
@@ -53,10 +55,11 @@ deviceManager.onDevicesChanged((connectedSerials) => {
 })
 
 // ─── Handler registry (same as Electron IPC) ──────────────────────────────
+const commandGate = new CommandGate()
 const handlers = new Map<string, (...args: any[]) => any>()
 
 function handle(channel: string, handler: (...args: any[]) => any): void {
-  handlers.set(channel, handler)
+  handlers.set(channel, (...args) => commandGate.run(() => handler(...args)))
 }
 
 // ─── Register all handlers ─────────────────────────────────────────────────
@@ -202,17 +205,14 @@ app.use('/api', (req, res, next) => {
 
 // REST API — wraps all registered handlers
 app.post('/api/call', async (req, res) => {
-  const { channel, args } = req.body
-  const handler = handlers.get(channel)
-  if (!handler) {
-    res.status(404).json({ error: `Unknown channel: ${channel}` })
-    return
-  }
   try {
-    const result = await handler(...(args ?? []))
-    res.json({ result })
+    assertCall(req.body)
+    const { channel, args } = req.body
+    const handler = handlers.get(channel)
+    if (!handler) { res.status(404).json({ error: `Unknown channel: ${channel}` }); return }
+    res.json({ result: await handler(...(args ?? [])) })
   } catch (err: any) {
-    res.status(500).json({ error: err.message })
+    res.status(400).json({ error: err?.message || 'Invalid command' })
   }
 })
 
@@ -266,6 +266,7 @@ const server = createServer(app)
 const wss = new WebSocketServer({
   server,
   path: '/ws',
+  maxPayload: 1024 * 1024,
   verifyClient: (info, done) => {
     if (isAuthorized(info.req)) {
       done(true)
@@ -316,6 +317,7 @@ wss.on('connection', (ws, req) => {
     let msgId: string | undefined
     try {
       const msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString())
+      assertCall(msg)
       const { id, channel, args } = msg
       msgId = id
       if (!channel || !id) {
@@ -345,7 +347,15 @@ server.listen(PORT, '0.0.0.0', () => {
   log('ok', `[Server] Android ADB GPS Spoofer Web listening on http://0.0.0.0:${PORT}`)
 })
 
+let shuttingDown = false
 async function gracefulShutdown(signal: string) {
+  if (shuttingDown) return
+  shuttingDown = true
+  deviceManager.stopPolling()
+  server.close()
+  for (const ws of wss.clients) ws.terminate()
+  wss.close()
+  await commandGate.closeAndDrain()
   log('info', `[Server] ${signal} received — cleaning up test providers…`)
   try { await engineManager.stopAll('immediate') } catch { /* best effort */ }
   engineManager.dispose()
