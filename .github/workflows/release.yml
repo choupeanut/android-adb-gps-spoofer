@@ -66,6 +66,9 @@ jobs:
             throw "Missing packaged AdbWinUsbApi.dll"
           }
 
+      - name: Verify packaged runtime dependencies
+        run: node scripts/verify-electron-package.cjs dist/win-unpacked/resources/app.asar
+
       - name: List dist artifacts
         shell: bash
         run: ls -lh dist/*.exe
@@ -110,6 +113,9 @@ jobs:
 
       - name: Build & package (AppImage)
         run: pnpm dist:linux
+
+      - name: Verify packaged runtime dependencies
+        run: node scripts/verify-electron-package.cjs dist/linux-unpacked/resources/app.asar
 
       - name: List dist artifacts
         run: ls -lh dist/*.AppImage
@@ -165,6 +171,9 @@ jobs:
             exit 1
           fi
           "$ADB_PATH" version
+
+      - name: Verify packaged runtime dependencies
+        run: node scripts/verify-electron-package.cjs "dist/mac-universal/Android ADB GPS Spoofer.app/Contents/Resources/app.asar"
 
       - name: List dist artifacts
         run: ls -lh dist/*.dmg dist/*.zip

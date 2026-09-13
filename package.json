@@ -1,6 +1,6 @@
 {
   "name": "android-adb-gps-spoofer",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "GPS location spoofing for Android via ADB \u2014 Electron desktop & Docker web server",
   "author": "peanutchou",
   "main": "./out/main/index.js",
@@ -16,6 +16,7 @@
     "build:web:client": "vite build --config vite.web.config.ts",
     "build:web": "pnpm build:web:server && pnpm build:web:client",
     "start:web": "node dist/server/index.js",
+    "verify:electron-package": "node scripts/verify-electron-package.cjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.web-server.json",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -35,6 +36,7 @@
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^1.0.1",
+    "@electron/asar": "3.4.1",
     "@types/better-sqlite3": "^7.6.12",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.25",

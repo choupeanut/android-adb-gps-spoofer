@@ -6,7 +6,7 @@ RUN apk add --no-cache python3 make g++ && npm install -g pnpm@10.15.0
 WORKDIR /app
 
 # Copy package files first (cache layer)
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .pnpmfile.cjs ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .pnpmfile.cjs ./
 
 # Install ALL dependencies (dev + prod) for build
 RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --frozen-lockfile
@@ -28,7 +28,7 @@ FROM node:20-alpine AS production-deps
 RUN apk add --no-cache python3 make g++ && npm install -g pnpm@10.15.0
 WORKDIR /app
 COPY web/package.json ./package.json
-COPY pnpm-lock.yaml .pnpmfile.cjs ./
+COPY pnpm-lock.yaml .npmrc .pnpmfile.cjs ./
 RUN pnpm install --prod --no-frozen-lockfile
 # Verify the native module in the same Node/libc environment as the runtime.
 RUN node -e "const DB = require('better-sqlite3'); const db = new DB(':memory:'); db.prepare('SELECT 1').get(); db.close()"

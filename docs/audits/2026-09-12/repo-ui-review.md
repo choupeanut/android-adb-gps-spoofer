@@ -52,4 +52,10 @@ Intermediate images 06–08 record implementation progress, not final acceptance
 
 No physical Android device was used; ADB commands were handled by a task-owned fake executable. Real USB/Wi-Fi behavior, Windows/macOS launch and physical GPS observations remain hardware/platform acceptance checks. Windows/macOS packaging and bundled ADB checks run in release CI. No production Portainer service or user database was changed. This audit is evidence of the reviewed paths and tests, not proof that every possible defect is absent.
 
+## Follow-up: Windows package dependency repair
+
+After v1.2.3 was published, the supplied Windows startup trace reported `Cannot find module 'ee-first'` from Express's `on-finished` module. Inspection of the released portable archive confirmed that `ee-first` and other transitive main-process modules were absent from its `app.asar`, even though the Linux archive contained them. The cause was electron-builder collecting the isolated pnpm layout differently on Windows.
+
+The v1.2.4 repair pins `node-linker=hoisted` in the repository `.npmrc` and adds `scripts/verify-electron-package.cjs`. The script walks the production closure of the Electron main-process external dependencies and checks each package's `package.json` inside `app.asar`; the release workflow runs it for Windows, Linux and macOS before uploading artifacts. v1.2.4 release CI is the acceptance gate for the corrected Windows package.
+
 Publication acceptance requires green main CI, successful Windows/Linux/macOS/Docker release jobs, five downloadable assets and matching main/tag commits. These remote results are checked after this report is committed.
