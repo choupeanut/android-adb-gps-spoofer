@@ -1,5 +1,7 @@
-import type { JSX } from 'react'
-import { X, MapPin, Footprints, Zap } from 'lucide-react'
+import { cancelMovement, movementCommand } from '../lib/movement-commands'
+import { useState, type JSX } from 'react'
+import { Modal } from './ui/Modal'
+import { MapPin, Footprints, Zap } from 'lucide-react'
 
 interface Props {
   isOpen: boolean
@@ -7,32 +9,25 @@ interface Props {
 }
 
 export function StopAllModal({ isOpen, onClose }: Props): JSX.Element | null {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
   if (!isOpen) return null
 
   const handleStop = async (mode: 'stay' | 'graceful' | 'immediate'): Promise<void> => {
-    await window.api.stopAll(mode)
-    onClose()
+    if (busy) return
+    setBusy(true); setError('')
+    cancelMovement()
+    try { await movementCommand(() => window.api.stopAll(mode)); onClose() }
+    catch (error: any) { setError(error?.message || 'Could not stop devices. Please retry.') }
+    finally { setBusy(false) }
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <div className="bg-card border border-border rounded-lg p-5 w-80 max-w-[90vw] shadow-2xl">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-foreground">Stop All Devices</h3>
-          <button
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground"
-            aria-label="Close"
-          >
-            <X size={16} />
-          </button>
-        </div>
-
+    <Modal isOpen={isOpen} onClose={onClose} title="Stop All Devices" className="max-w-sm">
+      {error && <p role="alert" className="mb-3 text-sm text-danger">{error}</p>}
         <div className="space-y-2">
           <button
+            disabled={busy}
             onClick={() => handleStop('stay')}
             className="w-full flex items-center gap-3 px-3 py-3 text-left text-sm bg-secondary hover:bg-secondary/80 rounded-md transition-colors"
           >
@@ -44,6 +39,7 @@ export function StopAllModal({ isOpen, onClose }: Props): JSX.Element | null {
           </button>
 
           <button
+            disabled={busy}
             onClick={() => handleStop('graceful')}
             className="w-full flex items-center gap-3 px-3 py-3 text-left text-sm bg-secondary hover:bg-secondary/80 rounded-md transition-colors"
           >
@@ -55,6 +51,7 @@ export function StopAllModal({ isOpen, onClose }: Props): JSX.Element | null {
           </button>
 
           <button
+            disabled={busy}
             onClick={() => handleStop('immediate')}
             className="w-full flex items-center gap-3 px-3 py-3 text-left text-sm bg-destructive/20 hover:bg-destructive/30 rounded-md transition-colors border border-destructive/30"
           >
@@ -65,7 +62,6 @@ export function StopAllModal({ isOpen, onClose }: Props): JSX.Element | null {
             </div>
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   )
 }

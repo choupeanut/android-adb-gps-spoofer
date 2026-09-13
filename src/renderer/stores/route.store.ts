@@ -67,6 +67,8 @@ interface RouteState {
   setWanderRadiusM: (v: number) => void
 }
 
+const invalidPlan = { plannedWaypoints: [], waypoints: [], plannedTotalDistanceKm: 0, plannedTotalDurationSec: 0, planWarnings: [], planStatus: 'idle' as const, planError: null }
+
 export const useRouteStore = create<RouteState>((set, get) => ({
   waypoints: [],
   controlPoints: [],
@@ -107,7 +109,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
           planError: null
         }
       }
-      return { controlPoints }
+      return { controlPoints, ...invalidPlan }
     }),
 
   removeControlPoint: (index) =>
@@ -125,7 +127,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
           planError: null
         }
       }
-      return { controlPoints }
+      return { controlPoints, ...invalidPlan }
     }),
 
   setControlPoints: (controlPoints) =>
@@ -142,7 +144,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
           planError: null
         }
       }
-      return { controlPoints }
+      return { controlPoints, ...invalidPlan }
     }),
 
   clearWaypoints: () =>
@@ -216,13 +218,13 @@ export const useRouteStore = create<RouteState>((set, get) => ({
       }
     }),
 
-  setRouteProfile: (routeProfile) => set({ routeProfile }),
+  setRouteProfile: (routeProfile) => set((s) => ({ routeProfile, ...(s.routeMode === 'road-network' && s.routeProfile !== routeProfile ? invalidPlan : {}) })),
 
   setPlanStatus: (planStatus, planError = null) => set({ planStatus, planError }),
 
   setPlaying: (playing) => set({ playing }),
   setIsPaused: (isPaused) => set({ isPaused }),
-  setLoop: (loop) => set({ loop }),
+  setLoop: (loop) => set((s) => ({ loop, ...(s.routeMode === 'road-network' && s.loop !== loop ? invalidPlan : {}) })),
   setWandering: (wandering) => set({ wandering }),
   setSpeedMs: (speedMs) => set({ speedMs }),
   setFixedSpeed: (fixedSpeed) => set({ fixedSpeed }),

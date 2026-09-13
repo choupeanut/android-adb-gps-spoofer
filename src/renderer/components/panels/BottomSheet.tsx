@@ -77,15 +77,18 @@ export function BottomSheet(): JSX.Element {
       }}
     >
       {/* Drag handle — swipeable + tappable */}
-      <div
+      <button
+        type="button"
+        aria-label={minimized ? 'Expand controls' : 'Minimize controls'}
+        aria-expanded={!minimized}
         className="flex justify-center items-center pt-2 pb-1 cursor-grab active:cursor-grabbing touch-none select-none"
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         onClick={handleToggle}
       >
-        <div className="w-10 h-1 rounded-full bg-muted-foreground/40" />
-      </div>
+        <span className="w-10 h-1 rounded-full bg-muted-foreground/40" />
+      </button>
 
       {minimized ? (
         /* Minimized: just show tab pills as a compact bar */

@@ -1,3 +1,4 @@
+import { cancelMovement, movementCommand } from '../../lib/movement-commands'
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type JSX } from 'react'
 import { Star, AlertTriangle, Footprints, Bike, Car, Plane, Search, MapPin } from 'lucide-react'
 import type { SavedLocation } from '@shared/types'
@@ -225,12 +226,16 @@ export function TeleportPanel(): JSX.Element {
   }
 
   const handleTeleport = async (): Promise<void> => {
-    if (!hasDevice || !validateCoordinates()) return
+    if (isTeleporting || !hasDevice || !validateCoordinates()) return
+    cancelMovement()
     setIsTeleporting(true)
     setActionError('')
     try {
-      await Promise.all(targetSerials.map((serial) => window.api.enableMockLocation(serial)))
-      await window.api.teleport(targetSerials, targetLat, targetLng)
+      await movementCommand(async () => {
+        const results = await Promise.all(targetSerials.map((serial) => window.api.enableMockLocation(serial)))
+        if (results.some((result) => !result.ok)) throw new Error('Mock location setup failed')
+        if (!await window.api.teleport(targetSerials, targetLat, targetLng)) throw new Error('Location update failed')
+      })
       await window.api.addLocationHistory(targetLat, targetLng)
       setPendingTeleport(null)
     } catch {

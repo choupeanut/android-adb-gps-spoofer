@@ -1,6 +1,7 @@
+import { attributionText } from '@shared/attribution'
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { RefreshCw, Navigation, Route, Crosshair, MapPin, Layers } from 'lucide-react'
-import { MapContainer, TileLayer, Marker, Tooltip, useMap, useMapEvents } from 'react-leaflet'
+import { AttributionControl, MapContainer, TileLayer, Marker, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import type { Map as LeafletMap } from 'leaflet'
 import type { TileProviderConfig } from '@shared/types'
@@ -26,14 +27,14 @@ const BUILTIN_TILE_PROVIDERS: TileProviderConfig[] = [
   {
     id: 'osm-local',
     label: 'OSM Local Labels',
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     subdomains: 'abc',
     maxZoom: 19
   }
 ]
 
-const DEFAULT_TILE_PROVIDER = BUILTIN_TILE_PROVIDERS[0]
+const DEFAULT_TILE_PROVIDER = BUILTIN_TILE_PROVIDERS[1]
 
 function readTileProviderFromLocalStorage(): TileProviderConfig | null {
   try {
@@ -260,10 +261,11 @@ export function MapView(): JSX.Element {
 
   return (
     <div className="h-full w-full relative">
-      <MapContainer center={[25.033, 121.565]} zoom={13} className="h-full w-full z-0">
+      <MapContainer attributionControl={false} center={[25.033, 121.565]} zoom={13} className="h-full w-full z-0">
+        <AttributionControl position="topright" />
         <TileLayer
           key={`${tileProvider.id}:${tileProvider.url}`}
-          attribution={tileProvider.attribution}
+          attribution={BUILTIN_TILE_PROVIDERS.find((provider) => provider.id === tileProvider.id && provider.url === tileProvider.url)?.attribution ?? attributionText(tileProvider.attribution)}
           url={tileProvider.url}
           subdomains={tileProvider.subdomains}
           maxZoom={tileProvider.maxZoom ?? 20}
@@ -321,7 +323,7 @@ export function MapView(): JSX.Element {
       </MapContainer>
 
       {/* Map click mode toggle — floating top-center, offset for left panel */}
-      <div className="absolute top-4 left-[calc(50%+150px)] -translate-x-1/2 z-[5]">
+      <div className="absolute top-4 left-1/2 md:left-[calc(50%+150px)] -translate-x-1/2 z-[5]">
         <div className="glass rounded-[var(--radius-md)] p-1 shadow-elevation-md">
           <SegmentedControl
             options={[
@@ -335,7 +337,7 @@ export function MapView(): JSX.Element {
       </div>
 
       {/* Tile provider selector */}
-      <div className="absolute top-4 right-4 z-[5]" ref={tileMenuRef}>
+      <div className="absolute top-16 md:top-4 right-4 z-[5]" ref={tileMenuRef}>
         <Button
           variant="icon"
           onClick={() => setShowTileMenu((v) => !v)}
@@ -369,6 +371,7 @@ export function MapView(): JSX.Element {
               <p className="text-xs font-semibold text-foreground">Custom URL</p>
               <input
                 type="text"
+                aria-label="Custom map tile URL"
                 value={customTileUrl}
                 onChange={(e) => setCustomTileUrl(e.target.value)}
                 placeholder="https://{s}.example.com/{z}/{x}/{y}.png"
@@ -376,6 +379,7 @@ export function MapView(): JSX.Element {
               />
               <input
                 type="text"
+                aria-label="Map attribution text"
                 value={customAttribution}
                 onChange={(e) => setCustomAttribution(e.target.value)}
                 placeholder="Attribution"

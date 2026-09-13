@@ -37,7 +37,7 @@ export function TopBar(): JSX.Element {
   const setSpeedMs = useRouteStore((s) => s.setSpeedMs)
   const playing = useRouteStore((s) => s.playing)
 
-  const [speedMode, setSpeedMode] = useState<SpeedMode>('walk')
+  const speedMode: SpeedMode = (Object.keys(SPEED_PRESETS) as Exclude<SpeedMode, 'custom'>[]).find((preset) => Math.abs(SPEED_PRESETS[preset] - speedMs) < 0.000001) ?? 'custom'
   const [showDeviceDropdown, setShowDeviceDropdown] = useState(false)
   const [showStopModal, setShowStopModal] = useState(false)
   const [showCustomSlider, setShowCustomSlider] = useState(false)
@@ -75,8 +75,10 @@ export function TopBar(): JSX.Element {
     if (!showDeviceDropdown) return
     let cancelled = false
     const fetch = async (): Promise<void> => {
-      const states = await window.api.getAllDeviceStates()
-      if (!cancelled) setDeviceStates(states)
+      try {
+        const states = await window.api.getAllDeviceStates()
+        if (!cancelled) setDeviceStates(states)
+      } catch { /* Retain the last known state during a transient disconnect. */ }
     }
     fetch()
     const t = setInterval(fetch, 3000)
@@ -85,20 +87,18 @@ export function TopBar(): JSX.Element {
 
   const handleSpeedChange = (mode: SpeedMode): void => {
     if (mode === 'custom') {
-      setSpeedMode('custom')
       setShowCustomSlider(true)
       return
     }
     setShowCustomSlider(false)
-    setSpeedMode(mode)
     const ms = SPEED_PRESETS[mode]
     setSpeedMs(ms)
-    if (playing) window.api.routeSetSpeed(ms)
+    if (playing) window.api.routeSetSpeed(ms, useDeviceStore.getState().getTargetSerials()).catch((error) => alert(`Speed update failed: ${error.message}`))
   }
 
   const handleCustomSpeedChange = (ms: number): void => {
     setSpeedMs(ms)
-    if (playing) window.api.routeSetSpeed(ms)
+    if (playing) window.api.routeSetSpeed(ms, useDeviceStore.getState().getTargetSerials()).catch((error) => alert(`Speed update failed: ${error.message}`))
   }
 
   const availableDevices = devices.filter((d) => d.status !== 'offline' || selectedSerials.includes(d.serial) || d.serial === activeDevice)
@@ -114,9 +114,9 @@ export function TopBar(): JSX.Element {
 
   return (
     <>
-      <header className="h-11 glass border-b border-white/10 flex items-center px-3 gap-3 shrink-0 z-[30]">
+      <header className="min-h-11 py-1 glass border-b border-white/10 flex flex-wrap sm:flex-nowrap items-center px-3 gap-2 shrink-0 z-[30]">
         {/* Device selector */}
-        <div className="relative" ref={deviceDropdownRef}>
+        <div className="relative mr-auto sm:mr-0" ref={deviceDropdownRef}>
           <button
             aria-label="Select devices"
             onClick={() => setShowDeviceDropdown((v) => !v)}
@@ -201,6 +201,7 @@ export function TopBar(): JSX.Element {
               {/* Add Device button */}
               <button
                 onClick={() => {
+                  deviceDropdownRef.current?.querySelector('button')?.focus()
                   setShowDeviceDropdown(false)
                   setShowConnectionDialog(true)
                 }}
@@ -214,13 +215,15 @@ export function TopBar(): JSX.Element {
         </div>
 
         {/* Speed pills */}
-        <div className="flex items-center gap-1 flex-1 min-w-0">
+        <div className="order-last sm:order-none flex items-center justify-between sm:justify-start gap-1 w-full sm:w-auto sm:flex-1 min-w-0 overflow-x-auto">
           {SPEED_ITEMS.map(({ mode: m, label, icon }) => (
             <button
               key={m}
+              aria-label={label}
+              aria-pressed={speedMode === m}
               onClick={() => handleSpeedChange(m)}
               title={m !== 'custom' ? `${SPEED_PRESETS[m]} m/s (${toKph(SPEED_PRESETS[m])} km/h)` : 'Custom speed'}
-              className={`h-9 px-3 text-xs rounded-[var(--radius-sm)] flex items-center gap-1.5 whitespace-nowrap transition-all ${
+              className={`shrink-0 h-9 px-3 text-xs rounded-[var(--radius-sm)] flex items-center gap-1.5 whitespace-nowrap transition-all ${
                 speedMode === m
                   ? 'bg-primary text-primary-foreground shadow-elevation-sm'
                   : 'bg-surface-elevated text-foreground-secondary border border-border hover:bg-surface-hover hover:text-foreground'
@@ -243,6 +246,7 @@ export function TopBar(): JSX.Element {
           >
             <p className="text-xs text-foreground-secondary mb-2 font-medium">Custom Speed</p>
             <input
+              aria-label="Custom speed in meters per second"
               type="range"
               min={0.5}
               max={300}
@@ -287,6 +291,7 @@ export function TopBar(): JSX.Element {
 
         {/* Stop All */}
         <button
+          aria-label="Stop All"
           onClick={() => setShowStopModal(true)}
           className="h-9 px-3 text-sm bg-danger text-white rounded-[var(--radius-sm)] hover:brightness-110 flex items-center gap-1.5 shrink-0 transition-all shadow-elevation-sm"
         >

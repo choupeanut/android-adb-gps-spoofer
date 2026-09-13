@@ -26,6 +26,8 @@ function applyJitter(loc: LocationUpdate): LocationUpdate {
 }
 
 export interface RouteState {
+  /** Stable shared-route membership, including temporarily unavailable members. */
+  serials?: string[]
   waypoints: RouteWaypoint[]
   totalDistanceKm: number
   currentWaypointIndex: number
@@ -79,7 +81,7 @@ export class RouteEngine {
   }
 
   setWanderEnabled(enabled: boolean, radiusM: number): void { this.wanderEnabled = enabled; this.wanderRadiusM = radiusM }
-  getState(): RouteState { return { ...this.state } }
+  getState(): RouteState { return { ...this.state, serials: this.memberSerials.length ? [...this.memberSerials] : [this.serial] } }
   getCurrentLocation(): LocationUpdate | null { return this.currentLocation }
   getTargetSerials(): string[] { return [...this.targetSerials] }
   getSpeedMs(): number { return this.speedMs }
@@ -451,7 +453,7 @@ export class RouteEngine {
     if (this.disposed) return
     const revision = nextEventRevision()
     for (const serial of this.memberSerials.length ? this.memberSerials : [this.serial]) {
-      broadcast('route-updated', { serial, revision, state: this.state, location: this.currentLocation })
+      broadcast('route-updated', { serial, revision, state: this.getState(), location: this.currentLocation })
       broadcast('location-updated', {
         serial, revision, location: this.currentLocation,
         mode: (this.currentLocation ? 'route' : 'idle') as SpoofMode

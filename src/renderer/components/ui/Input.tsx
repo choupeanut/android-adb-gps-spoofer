@@ -11,8 +11,11 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
 
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
   ({ className, label, error, mono, leftIcon, rightIcon, type = 'text', ...props }, ref) => {
+    const generatedId = React.useId()
+    const inputId = props.id ?? generatedId
+    const errorId = `${inputId}-error`
     const [isFocused, setIsFocused] = React.useState(false)
-    const [hasValue, setHasValue] = React.useState(false)
+    const [hasValue, setHasValue] = React.useState(String(props.defaultValue ?? '').length > 0)
     
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       setHasValue(e.target.value.length > 0)
@@ -37,6 +40,10 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           )}
           
           <input
+            {...props}
+            id={inputId}
+            aria-invalid={error ? true : props['aria-invalid']}
+            aria-describedby={[props['aria-describedby'], error ? errorId : undefined].filter(Boolean).join(' ') || undefined}
             ref={ref}
             type={type}
             className={cn(
@@ -47,14 +54,13 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
               rightIcon && 'pr-10',
               label && 'pt-4 pb-1'
             )}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
+            onFocus={(event) => { setIsFocused(true); props.onFocus?.(event) }}
+            onBlur={(event) => { setIsFocused(false); props.onBlur?.(event) }}
             onChange={handleChange}
-            {...props}
           />
           
           {label && (
-            <label
+            <label htmlFor={inputId}
               className={cn(
                 'absolute left-3 transition-all duration-200 pointer-events-none',
                 'text-foreground-muted',
@@ -76,7 +82,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
         </div>
         
         {error && (
-          <p className="mt-1.5 text-xs text-danger">{error}</p>
+          <p id={errorId} role="alert" className="mt-1.5 text-xs text-danger">{error}</p>
         )}
       </div>
     )

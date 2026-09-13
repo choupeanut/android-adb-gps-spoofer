@@ -18,8 +18,8 @@ interface UiState {
 
 export const useUiStore = create<UiState>((set) => ({
   activeTab: 'teleport',
-  setActiveTab: (activeTab) => set({ activeTab }),
+  setActiveTab: (activeTab) => set((state) => ({ activeTab, mapClickMode: activeTab === 'route' || activeTab === 'teleport' ? activeTab : state.mapClickMode })),
 
   mapClickMode: 'teleport',
-  setMapClickMode: (mapClickMode) => set({ mapClickMode })
+  setMapClickMode: (mapClickMode) => set({ mapClickMode, activeTab: mapClickMode })
 }))

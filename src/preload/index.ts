@@ -29,9 +29,9 @@ const api = {
   teleport: (serials: string[], lat: number, lng: number) =>
     ipcRenderer.invoke('teleport', serials, lat, lng),
   startJoystick: (serials: string[]) => ipcRenderer.invoke('start-joystick', serials),
-  stopJoystick: () => ipcRenderer.invoke('stop-joystick'),
-  updatePosition: (lat: number, lng: number, bearing: number, speed: number) =>
-    ipcRenderer.invoke('update-position', lat, lng, bearing, speed),
+  stopJoystick: (serials?: string[]) => ipcRenderer.invoke('stop-joystick', serials),
+  updatePosition: (lat: number, lng: number, bearing: number, speed: number, serials?: string[]) =>
+    ipcRenderer.invoke('update-position', lat, lng, bearing, speed, serials),
   stopSpoofing: (serials: string[]) => ipcRenderer.invoke('stop-spoofing', serials),
   stopSpoofingGraceful: (serials: string[], realLat: number, realLng: number) =>
     ipcRenderer.invoke('stop-spoofing-graceful', serials, realLat, realLng),
@@ -46,19 +46,19 @@ const api = {
     ipcRenderer.invoke('route-plan-road-network', request),
   routePlay: (serials: string[], speedMs: number, fromLat?: number, fromLng?: number) =>
     ipcRenderer.invoke('route-play', serials, speedMs, fromLat, fromLng),
-  routePause: () => ipcRenderer.invoke('route-pause'),
-  routeStop: () => ipcRenderer.invoke('route-stop'),
-  routeStopStay: () => ipcRenderer.invoke('route-stop-stay'),
-  routeReturnToGps: (realLat: number, realLng: number, speedMs: number) =>
-    ipcRenderer.invoke('route-return-to-gps', realLat, realLng, speedMs),
-  routeSetLoop: (loop: boolean) => ipcRenderer.invoke('route-set-loop', loop),
-  routeGetState: () => ipcRenderer.invoke('route-get-state'),
-  routeSetWander: (enabled: boolean, radiusM: number) =>
-    ipcRenderer.invoke('route-set-wander', enabled, radiusM),
-  routeSetSpeed: (speedMs: number) =>
-    ipcRenderer.invoke('route-set-speed', speedMs),
-  routeSetFixedSpeed: (enabled: boolean) =>
-    ipcRenderer.invoke('route-set-fixed-speed', enabled),
+  routePause: (serials?: string[]) => ipcRenderer.invoke('route-pause', serials),
+  routeStop: (serials?: string[]) => ipcRenderer.invoke('route-stop', serials),
+  routeStopStay: (serials?: string[]) => ipcRenderer.invoke('route-stop-stay', serials),
+  routeReturnToGps: (realLat: number, realLng: number, speedMs: number, serials?: string[]) =>
+    ipcRenderer.invoke('route-return-to-gps', realLat, realLng, speedMs, serials),
+  routeSetLoop: (loop: boolean, serials?: string[]) => ipcRenderer.invoke('route-set-loop', loop, serials),
+  routeGetState: (serial?: string) => ipcRenderer.invoke('route-get-state', serial),
+  routeSetWander: (enabled: boolean, radiusM: number, serials?: string[]) =>
+    ipcRenderer.invoke('route-set-wander', enabled, radiusM, serials),
+  routeSetSpeed: (speedMs: number, serials?: string[]) =>
+    ipcRenderer.invoke('route-set-speed', speedMs, serials),
+  routeSetFixedSpeed: (enabled: boolean, serials?: string[]) =>
+    ipcRenderer.invoke('route-set-fixed-speed', enabled, serials),
 
   // GPX
   importGpx: () => ipcRenderer.invoke('import-gpx'),
@@ -86,6 +86,8 @@ const api = {
     ipcRenderer.invoke('wifi-ip-history-record', ip, port),
   deleteWifiIpHistory: (ip: string, port: number) =>
     ipcRenderer.invoke('wifi-ip-history-delete', ip, port),
+
+  onConnectionChanged: (_callback: (data: unknown) => void) => () => {},
 
   // Events
   onDevicesChanged: (callback: (data: unknown) => void) => {

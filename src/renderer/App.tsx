@@ -1,11 +1,14 @@
-import { useEffect, useRef, useCallback, type JSX } from 'react'
+import { settingsFingerprint } from './lib/session-settings'
+import { createRouteCompletion } from './lib/route-completion'
+import { useEffect, useRef, useCallback, useState, type JSX } from 'react'
 import { MapView } from './components/map/MapView'
 import { TopBar } from './components/TopBar'
 import { FloatingControlPanel } from './components/layout/FloatingControlPanel'
 import { JoystickFloating } from './components/layout/JoystickFloating'
 import { BottomSheet } from './components/panels/BottomSheet'
 import { useBreakpoint } from './hooks/useBreakpoint'
-import { useDeviceStore } from './stores/device.store'
+import { DisplayEvents } from './lib/display-events'
+import { useDeviceStore, getDisplayedSerial } from './stores/device.store'
 import { useLocationStore } from './stores/location.store'
 import { useLogStore } from './stores/log.store'
 import { useRouteStore } from './stores/route.store'
@@ -13,7 +16,7 @@ import { useRouteStore } from './stores/route.store'
 export default function App(): JSX.Element {
   const setDevices = useDeviceStore((s) => s.setDevices)
   const setActiveDevice = useDeviceStore((s) => s.setActiveDevice)
-  const activeDevice = useDeviceStore((s) => s.activeDevice)
+  const activeDevice = useDeviceStore((s) => s.selectedSerials.length ? (s.activeDevice && s.selectedSerials.includes(s.activeDevice) ? s.activeDevice : s.selectedSerials[0]) : s.activeDevice)
   const devices = useDeviceStore((s) => s.devices)
 
   const setLocation = useLocationStore((s) => s.setLocation)
@@ -51,19 +54,23 @@ export default function App(): JSX.Element {
   const breakpoint = useBreakpoint()
   const isMobile = breakpoint === 'mobile'
 
+  const [sessionLoaded, setSessionLoaded] = useState(false)
+
   // Debounced session save for client-only settings
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scheduleSaveSession = useCallback((data: Record<string, unknown>) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      window.api.saveSession(data).catch(() => {})
+      window.api.saveSession(data).catch((error) => useLogStore.getState().addEntry({ ts: Date.now(), level: 'error', msg: `Session save failed: ${error}` }))
     }, 600)
   }, [])
 
   // Load session on mount and hydrate client-only store fields
   useEffect(() => {
+    const initialSettings = settingsFingerprint(useRouteStore.getState())
+    let cancelled = false
     ;(window.api.getSession() as Promise<any>).then((s: any) => {
-      if (!s) return
+      if (!s || cancelled || settingsFingerprint(useRouteStore.getState()) !== initialSettings) return
       if (typeof s.speedMs === 'number') setSpeedMs(s.speedMs)
       if (typeof s.fixedSpeed === 'boolean') setFixedSpeed(s.fixedSpeed)
       if (typeof s.loop === 'boolean') setLoop(s.loop)
@@ -77,7 +84,8 @@ export default function App(): JSX.Element {
       if (Array.isArray(s.waypoints) && s.routeMode === 'manual') setWaypoints(s.waypoints)
       if (typeof s.returnOnFinish === 'boolean') setReturnOnFinish(s.returnOnFinish)
       if (typeof s.startFromRealGps === 'boolean') setStartFromRealGps(s.startFromRealGps)
-    }).catch(() => {})
+    }).catch((error) => addEntry({ ts: Date.now(), level: 'error', msg: `Session load failed: ${error}` })).finally(() => { if (!cancelled) setSessionLoaded(true) })
+    return () => { cancelled = true }
   }, [
     setSpeedMs,
     setFixedSpeed,
@@ -94,6 +102,7 @@ export default function App(): JSX.Element {
 
   // Save client-only settings when they change
   useEffect(() => {
+    if (!sessionLoaded) return
     scheduleSaveSession({
       speedMs,
       fixedSpeed,
@@ -107,6 +116,7 @@ export default function App(): JSX.Element {
       returnOnFinish,
       startFromRealGps
     })
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
   }, [
     speedMs,
     fixedSpeed,
@@ -118,105 +128,89 @@ export default function App(): JSX.Element {
     controlPoints,
     returnOnFinish,
     startFromRealGps,
+    sessionLoaded,
     scheduleSaveSession
   ])
 
   // Core IPC subscriptions
   useEffect(() => {
-    const revisions = new Map<string, number>()
-    let acceptedEventEpoch = 0
-
-    const isDisplayedSerial = (serial?: string): boolean => {
-      if (!serial) return true
-      const { activeDevice: currentActive, selectedSerials } = useDeviceStore.getState()
-      const displayedSerials = selectedSerials.length > 0
-        ? selectedSerials
-        : currentActive ? [currentActive] : []
-      // During startup the device list may not have arrived yet. Accepting the
-      // first snapshot prevents a location event from being lost in that gap.
-      return displayedSerials.length === 0 || displayedSerials.includes(serial)
-    }
-
-    const applyLocationEvent = (data: any, fallbackMode?: string): boolean => {
-      if (!data || typeof data !== 'object') return false
-      const serial = typeof data.serial === 'string' ? data.serial : undefined
-      const revision = Number(data.revision)
-      if (serial && Number.isFinite(revision)) {
-        const previous = revisions.get(serial)
-        if (previous !== undefined && revision < previous) return false
-        revisions.set(serial, revision)
+    const gate = new DisplayEvents(getDisplayedSerial)
+    let disposed = false
+    const report = (error: unknown): void => addEntry({ ts: Date.now(), level: 'error', msg: String(error) })
+    const completion = createRouteCompletion(window.api, () => useRouteStore.getState(), report)
+    const apply = (data: any): void => {
+      if (disposed || !data) return
+      completion.accept(data)
+      if (disposed || !data || !gate.accept(data)) return
+      if (Object.prototype.hasOwnProperty.call(data, 'location')) {
+        setLocation(data.location ?? null)
+        setMode(data.mode ?? (data.location ? 'route' : 'idle'))
       }
-      if (!isDisplayedSerial(serial) || !Object.prototype.hasOwnProperty.call(data, 'location')) {
-        return false
-      }
+      if (!data.state) return
+      const state = data.state
+      setRouteProgress(state.currentWaypointIndex, state.progressFraction)
+      setPlaying(state.playing)
+      useRouteStore.getState().setIsPaused(state.isPaused ?? state.paused ?? (!state.playing && !state.finishedNaturally && !!data.location && data.mode !== 'joystick'))
+      setWandering(state.wandering ?? false)
 
-      setLocation(data.location ?? null)
-      const mode = typeof data.mode === 'string'
-        ? data.mode
-        : fallbackMode ?? (data.location ? 'route' : 'idle')
-      setMode(mode)
-      acceptedEventEpoch += 1
-      return true
     }
-
-    const hydrateLocation = async (serial?: string): Promise<void> => {
-      if (typeof window.api.getLocationState !== 'function') return
-      const epochAtRequest = acceptedEventEpoch
+    const hydrate = async (): Promise<void> => {
+      const serial = getDisplayedSerial()
+      if (!serial) { setLocation(null); setPlaying(false); setWandering(false); return }
+      const current = gate.ticket()
       try {
-        const snapshot: any = await window.api.getLocationState(serial)
-        // An event received after the request is newer than this snapshot.
-        if (epochAtRequest !== acceptedEventEpoch) return
-        applyLocationEvent({ ...snapshot, serial }, snapshot?.mode)
-      } catch {
-        // A transient ADB/WebSocket failure should not clear the marker.
-      }
+        const [snapshot, state]: any[] = await Promise.all([window.api.getLocationState(serial), window.api.routeGetState(serial)])
+        if (!disposed && current()) apply({ ...snapshot, serial, state })
+      } catch (error) { report(error) }
     }
-
-    window.api.getDevices().then((data) => {
-      setDevices(data.devices)
-      setActiveDevice(data.activeDevice)
-      void hydrateLocation(data.activeDevice ?? undefined)
-    }).catch(() => {})
-
-    const unsubDevices = window.api.onDevicesChanged((data: any) => {
-      const previousActive = useDeviceStore.getState().activeDevice
-      setDevices(data.devices)
-      setActiveDevice(data.activeDevice)
-      if (previousActive !== data.activeDevice) void hydrateLocation(data.activeDevice ?? undefined)
-    })
-
-    const unsubLocation = window.api.onLocationUpdated((data: any) => {
-      applyLocationEvent(data, data?.mode)
-    })
-
-    // Route events: drive the map marker AND route progress
-    const unsubRoute = window.api.onRouteUpdated((data: any) => {
-      if (Object.prototype.hasOwnProperty.call(data ?? {}, 'location')) {
-        applyLocationEvent(data, data.location ? 'route' : 'idle')
-      }
-      if (data.state) {
-        setRouteProgress(data.state.currentWaypointIndex, data.state.progressFraction)
-        setPlaying(data.state.playing)
-        setWandering(data.state.wandering ?? false)
-
-        // Auto-return when route finishes naturally and not already wandering
-        if (data.state.finishedNaturally && !data.state.wandering) {
-          const { returnOnFinish, speedMs } = useRouteStore.getState()
-          if (returnOnFinish) {
-            const realGps = useLocationStore.getState().realGpsLocation
-            if (realGps) {
-              window.api.routeReturnToGps(realGps.lat, realGps.lng, speedMs)
-            }
-          }
+    const unsubSelection = useDeviceStore.subscribe((state, previous) => {
+      if (state.activeDevice !== previous.activeDevice || state.selectedSerials !== previous.selectedSerials) {
+        gate.invalidate()
+        const previousOwner = previous.selectedSerials.length
+          ? (previous.activeDevice && previous.selectedSerials.includes(previous.activeDevice) ? previous.activeDevice : previous.selectedSerials[0])
+          : previous.activeDevice
+        if (previousOwner !== getDisplayedSerial()) {
+          setLocation(null)
+          setPlaying(false)
+          useRouteStore.getState().setIsPaused(false)
+          setWandering(false)
+          setRealGpsLocation(null)
+          void hydrate()
         }
       }
     })
+    let deviceEpoch = 0
+    const deviceTicket = deviceEpoch
+    void window.api.getDevices().then((data) => {
+      if (disposed || deviceTicket !== deviceEpoch) return
+      setDevices(data.devices)
+      setActiveDevice(data.activeDevice)
+      void hydrate()
+    }).catch(report)
+    const unsubConnection = window.api.onConnectionChanged(() => {
+      gate.reset()
+      deviceEpoch++
+      completion.reset()
+      void hydrate()
+    })
+    const unsubDevices = window.api.onDevicesChanged((data: any) => {
+      deviceEpoch++
+      setDevices(data.devices)
+      setActiveDevice(data.activeDevice)
+    })
+    const unsubLocation = window.api.onLocationUpdated(apply)
+    const unsubRoute = window.api.onRouteUpdated(apply)
 
     const unsubLog = window.api.onLogEntry((entry: any) => {
       addEntry(entry)
     })
 
     return () => {
+      disposed = true
+      completion.dispose()
+      gate.reset()
+      unsubSelection()
+      unsubConnection()
       unsubDevices()
       unsubLocation()
       unsubRoute()
@@ -245,12 +239,14 @@ export default function App(): JSX.Element {
       } else {
         setTimeout(async () => {
           if (cancelled) return
-          const retry: any = await window.api.getRealLocation(activeDevice)
-          if (!cancelled) setRealGpsLocation(retry ?? null)
+          try {
+            const retry: any = await window.api.getRealLocation(activeDevice)
+            if (!cancelled) setRealGpsLocation(retry ?? null)
+          } catch (error) { addEntry({ ts: Date.now(), level: 'error', msg: `GPS retry failed: ${error}` }) }
         }, 3000)
       }
     }
-    fetchGps()
+    void fetchGps().catch((error) => addEntry({ ts: Date.now(), level: 'error', msg: `GPS read failed: ${error}` }))
     return () => { cancelled = true }
   }, [activeDevice, devices, setRealGpsLocation])
 
@@ -274,8 +270,8 @@ export default function App(): JSX.Element {
       setAllDeviceLocations(clean)
     }
 
-    fetchAll()
-    const interval = setInterval(fetchAll, 10000)
+    void fetchAll().catch((error) => addEntry({ ts: Date.now(), level: 'error', msg: `GPS read failed: ${error}` }))
+    const interval = setInterval(() => void fetchAll().catch((error) => addEntry({ ts: Date.now(), level: 'error', msg: `GPS read failed: ${error}` })), 10000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [devices, setAllDeviceLocations])
 

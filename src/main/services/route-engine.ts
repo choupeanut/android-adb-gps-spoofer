@@ -13,6 +13,8 @@ const ROUTE_PUSH_STALE_MS = 800  // Consider stale after 800ms (was 1500ms)
 const ROUTE_WATCHDOG_INTERVAL_MS = 200  // Check every 200ms (was 300ms)
 
 export interface RouteState {
+  /** Stable shared-route membership, including temporarily unavailable members. */
+  serials?: string[]
   waypoints: RouteWaypoint[]
   totalDistanceKm: number
   currentWaypointIndex: number
@@ -80,7 +82,7 @@ export class RouteEngine {
     this.wanderRadiusM = radiusM
   }
 
-  getState(): RouteState { return { ...this.state } }
+  getState(): RouteState { return { ...this.state, serials: this.memberSerials.length ? [...this.memberSerials] : [this.serial] } }
   getCurrentLocation(): LocationUpdate | null { return this.currentLocation }
 
   /** Mode handoff must drain already-issued ADB writes before starting a new writer. */
@@ -546,7 +548,7 @@ export class RouteEngine {
     if (this.disposed) return
     const revision = nextEventRevision()
     for (const serial of this.memberSerials.length ? this.memberSerials : [this.serial]) {
-      broadcast('route-updated', { serial, revision, state: this.state, location: this.currentLocation })
+      broadcast('route-updated', { serial, revision, state: this.getState(), location: this.currentLocation })
       broadcast('location-updated', {
         serial, revision, location: this.currentLocation,
         mode: (this.currentLocation ? 'route' : 'idle') as SpoofMode

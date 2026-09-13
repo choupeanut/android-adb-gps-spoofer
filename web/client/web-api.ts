@@ -13,7 +13,7 @@ const webAuthToken = new URLSearchParams(location.search).get('token')
 let ws: WebSocket | null = null
 let wsReady = false
 let msgId = 0
-const pending = new Map<string, { resolve: (v: any) => void; reject: (e: any) => void }>()
+const pending = new Map<string, { resolve: (v: any) => void; reject: (e: any) => void; timer: ReturnType<typeof setTimeout> }>()
 const eventListeners: Record<string, Set<EventCallback>> = {}
 
 function withAuthToken(path: string): string {
@@ -33,6 +33,7 @@ function connectWs(): void {
 
   ws.onopen = () => {
     wsReady = true
+    fire('connection-changed', { connected: true })
     console.log('[GpsSpoofer] WebSocket connected')
   }
 
@@ -44,6 +45,7 @@ function connectWs(): void {
         const p = pending.get(msg.id)
         if (p) {
           pending.delete(msg.id)
+          clearTimeout(p.timer)
           if (msg.error) p.reject(new Error(msg.error))
           else p.resolve(msg.result)
         }
@@ -60,13 +62,16 @@ function connectWs(): void {
         const { devices, activeDevice, serial, revision, location, mode, route } = msg.data
         fire('devices-changed', { devices, activeDevice })
         fire('location-updated', { serial, revision, location, mode })
-        if (route) fire('route-updated', { serial, revision, state: route, location })
+        if (route) fire('route-updated', { serial, revision, state: route, location, mode })
       }
     } catch { /* ignore parse errors */ }
   }
 
   ws.onclose = () => {
     wsReady = false
+    for (const request of pending.values()) { clearTimeout(request.timer); request.reject(new Error('Connection lost; the command may still complete on the device.')) }
+    pending.clear()
+    fire('connection-changed', { connected: false })
     console.log('[GpsSpoofer] WebSocket disconnected, reconnecting in 2s...')
     setTimeout(connectWs, 2000)
   }
@@ -87,41 +92,43 @@ function fire(channel: string, data: any): void {
 
 /** Send a command via WebSocket and wait for response. */
 function wsInvoke(channel: string, ...args: any[]): Promise<any> {
+  // JSON arrays encode undefined as null; preserve omitted optional parameters.
+  while (args.length && args[args.length - 1] === undefined) args.pop()
+  if (!ws || !wsReady) return restInvoke(channel, args)
   return new Promise((resolve, reject) => {
     const id = String(++msgId)
-    pending.set(id, { resolve, reject })
-
-    const send = (): void => {
-      if (ws && wsReady) {
-        ws.send(JSON.stringify({ id, channel, args }))
-      } else {
-        // Fallback to REST if WS not ready
-        restInvoke(channel, args).then(resolve).catch(reject)
-        pending.delete(id)
-      }
-    }
-
-    send()
-
-    // Timeout after 15s
-    setTimeout(() => {
-      if (pending.has(id)) {
-        pending.delete(id)
-        reject(new Error(`Timeout: ${channel}`))
-      }
+    const timer = setTimeout(() => {
+      pending.delete(id)
+      reject(new Error(`Timeout: ${channel}. The device command may still complete.`))
     }, 15000)
+    pending.set(id, { resolve, reject, timer })
+    try { ws!.send(JSON.stringify({ id, channel, args })) }
+    catch (error) { clearTimeout(timer); pending.delete(id); reject(error) }
   })
 }
 
-/** REST fallback. */
+async function fetchJson(path: string, options: RequestInit = {}): Promise<any> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout>
+  try {
+    return await Promise.race([
+      (async () => {
+        const res = await fetch(withAuthToken(path), { ...options, signal: controller.signal })
+        const data = await res.json()
+        if (!res.ok || data?.error) throw new Error(data?.error || `Request failed (${res.status})`)
+        return data
+      })(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => { reject(new Error('Request timed out; a submitted device command may still complete.')); controller.abort() }, 15000)
+      })
+    ])
+  } finally { clearTimeout(timer!) }
+}
+
 async function restInvoke(channel: string, args: any[]): Promise<any> {
-  const res = await fetch(withAuthToken('/api/call'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ channel, args })
+  const data = await fetchJson('/api/call', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channel, args })
   })
-  const data = await res.json()
-  if (data.error) throw new Error(data.error)
   return data.result
 }
 
@@ -138,6 +145,7 @@ const api = {
   getDevices: () => wsInvoke('get-devices'),
   setActiveDevice: (serial: string) => wsInvoke('set-active-device', serial),
   testAdb: (serial: string) => wsInvoke('test-adb', serial),
+  getAdbDiagnostics: () => wsInvoke('get-adb-diagnostics'),
   enableMockLocation: (serial: string) => wsInvoke('enable-mock-location', serial),
   getRealLocation: (serial: string) => wsInvoke('get-real-location', serial),
   getAllRealLocations: () => wsInvoke('get-all-real-locations'),
@@ -148,9 +156,10 @@ const api = {
   teleport: (serials: string[], lat: number, lng: number) =>
     wsInvoke('teleport', serials, lat, lng),
   startJoystick: (serials: string[]) => wsInvoke('start-joystick', serials),
-  stopJoystick: () => wsInvoke('stop-joystick'),
-  updatePosition: (lat: number, lng: number, bearing: number, speed: number) =>
-    wsInvoke('update-position', lat, lng, bearing, speed),
+  onConnectionChanged: (callback: EventCallback) => onEvent('connection-changed', callback),
+  stopJoystick: (serials?: string[]) => wsInvoke('stop-joystick', serials),
+  updatePosition: (lat: number, lng: number, bearing: number, speed: number, serials?: string[]) =>
+    wsInvoke('update-position', lat, lng, bearing, speed, serials),
   stopSpoofing: (serials: string[]) => wsInvoke('stop-spoofing', serials),
   stopSpoofingGraceful: (serials: string[], realLat: number, realLng: number) =>
     wsInvoke('stop-spoofing-graceful', serials, realLat, realLng),
@@ -162,43 +171,39 @@ const api = {
   routePlanRoadNetwork: (request: any) => wsInvoke('route-plan-road-network', request),
   routePlay: (serials: string[], speedMs: number, fromLat?: number, fromLng?: number) =>
     wsInvoke('route-play', serials, speedMs, fromLat, fromLng),
-  routePause: () => wsInvoke('route-pause'),
-  routeStop: () => wsInvoke('route-stop'),
-  routeStopStay: () => wsInvoke('route-stop-stay'),
-  routeReturnToGps: (realLat: number, realLng: number, speedMs: number) =>
-    wsInvoke('route-return-to-gps', realLat, realLng, speedMs),
-  routeSetLoop: (loop: boolean) => wsInvoke('route-set-loop', loop),
-  routeGetState: () => wsInvoke('route-get-state'),
-  routeSetWander: (enabled: boolean, radiusM: number) =>
-    wsInvoke('route-set-wander', enabled, radiusM),
-  routeSetSpeed: (speedMs: number) => wsInvoke('route-set-speed', speedMs),
-  routeSetFixedSpeed: (enabled: boolean) => wsInvoke('route-set-fixed-speed', enabled),
+  routePause: (serials?: string[]) => wsInvoke('route-pause', serials),
+  routeStop: (serials?: string[]) => wsInvoke('route-stop', serials),
+  routeStopStay: (serials?: string[]) => wsInvoke('route-stop-stay', serials),
+  routeReturnToGps: (realLat: number, realLng: number, speedMs: number, serials?: string[]) =>
+    wsInvoke('route-return-to-gps', realLat, realLng, speedMs, serials),
+  routeSetLoop: (loop: boolean, serials?: string[]) => wsInvoke('route-set-loop', loop, serials),
+  routeGetState: (serial?: string) => wsInvoke('route-get-state', serial),
+  routeSetWander: (enabled: boolean, radiusM: number, serials?: string[]) =>
+    wsInvoke('route-set-wander', enabled, radiusM, serials),
+  routeSetSpeed: (speedMs: number, serials?: string[]) => wsInvoke('route-set-speed', speedMs, serials),
+  routeSetFixedSpeed: (enabled: boolean, serials?: string[]) => wsInvoke('route-set-fixed-speed', enabled, serials),
 
   // GPX — web version uses file input + server-side parse
-  importGpx: async () => {
-    return new Promise<any[]>((resolve) => {
-      const input = document.createElement('input')
-      input.type = 'file'
-      input.accept = '.gpx'
-      input.onchange = async () => {
+  importGpx: () => new Promise<any[]>((resolve, reject) => {
+    const input = document.createElement('input')
+    input.type = 'file'; input.accept = '.gpx'
+    input.oncancel = () => { input.remove(); resolve([]) }
+    input.onchange = async () => {
+      try {
         const file = input.files?.[0]
         if (!file) { resolve([]); return }
+        if (file.size > 5 * 1024 * 1024) throw new Error('GPX must be no larger than 5 MiB')
         const content = await file.text()
-        try {
-          const res = await fetch(withAuthToken('/api/gpx/parse'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content })
-          })
-          const waypoints = await res.json()
-          resolve(Array.isArray(waypoints) ? waypoints : [])
-        } catch {
-          resolve([])
-        }
-      }
-      input.click()
-    })
-  },
+        const points = await fetchJson('/api/gpx/parse', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content })
+        })
+        if (!Array.isArray(points)) throw new Error('Invalid GPX response')
+        resolve(points)
+      } catch (error) { reject(error) }
+      finally { input.remove() }
+    }
+    input.click()
+  }),
 
   // WiFi ADB
   connectWifi: (ip: string, port?: number) => wsInvoke('connect-wifi', ip, port),
@@ -235,8 +240,7 @@ const api = {
   // App version (web returns server-provided version via meta tag or env)
   getAppVersion: async (): Promise<string> => {
     try {
-      const res = await fetch(withAuthToken('/api/version'))
-      const data = await res.json()
+      const data = await fetchJson('/api/version')
       return data.version || 'web'
     } catch {
       return 'web'
@@ -246,8 +250,7 @@ const api = {
   // Client IP detection (web-only)
   getClientIp: async (): Promise<string | null> => {
     try {
-      const res = await fetch(withAuthToken('/api/client-ip'))
-      const data = await res.json()
+      const data = await fetchJson('/api/client-ip')
       return data.ip || null
     } catch {
       return null
@@ -259,3 +262,5 @@ const api = {
 
 // Start WebSocket connection
 connectWs()
+
+export {}

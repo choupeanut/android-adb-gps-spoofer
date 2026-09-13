@@ -1,3 +1,4 @@
+import { movementCommand, startMovement, onMovementCancelled } from '../../lib/movement-commands'
 import { useState, useEffect, useMemo, useRef, type JSX } from 'react'
 import { Play, Pause, CornerDownLeft, X, FileUp, Trash2, MapPin } from 'lucide-react'
 import { useRouteStore } from '../../stores/route.store'
@@ -17,7 +18,6 @@ export function RoutePanel(): JSX.Element {
   const controlPoints = useRouteStore((s) => s.controlPoints)
   const routeMode = useRouteStore((s) => s.routeMode)
   const routeProfile = useRouteStore((s) => s.routeProfile)
-  const plannedWaypoints = useRouteStore((s) => s.plannedWaypoints)
   const plannedTotalDistanceKm = useRouteStore((s) => s.plannedTotalDistanceKm)
   const plannedTotalDurationSec = useRouteStore((s) => s.plannedTotalDurationSec)
   const planWarnings = useRouteStore((s) => s.planWarnings)
@@ -68,6 +68,19 @@ export function RoutePanel(): JSX.Element {
     return activeDevice ? [activeDevice] : []
   }, [selectedSerials, activeDevice])
 
+  const operationRef = useRef(0)
+  const report = (error: unknown): void => setReturnMsg(String(error))
+  const assertMock = (results: { ok: boolean; error?: string }[]): void => {
+    const failed = results.find((result) => !result.ok)
+    if (failed) throw new Error(failed.error || 'Mock location setup failed')
+  }
+  useEffect(() => {
+    operationRef.current += 1
+    return () => { operationRef.current += 1 }
+  }, [effectiveTargets, waypoints, speedMs, loop, wanderEnabled, wanderRadiusM, fixedSpeed, routeMode, routeProfile, startFromRealGps])
+
+  useEffect(() => onMovementCancelled(() => { operationRef.current += 1 }), [])
+
   const prevTargetsRef = useRef<string[]>([])
   const wasPlayingRef = useRef(false)
   useEffect(() => {
@@ -78,11 +91,14 @@ export function RoutePanel(): JSX.Element {
     if (activelyPlaying && wasPlaying && waypoints.length >= 2) {
       const added = effectiveTargets.filter((s) => !prevTargetsRef.current.includes(s))
       if (added.length > 0) {
-        ;(async (): Promise<void> => {
-          await Promise.all(added.map((serial) => window.api.enableMockLocation(serial)))
-          // Include existing members so the backend joins their current timeline.
-          await window.api.routePlay(effectiveTargets, speedMs)
-        })()
+        const operation = operationRef.current
+        void startMovement({
+          cancelled: () => operation !== operationRef.current,
+          prepare: async () => { assertMock(await Promise.all(added.map((serial) => window.api.enableMockLocation(serial)))) },
+          // Existing members let the backend join the current shared timeline.
+          start: () => window.api.routePlay(effectiveTargets, speedMs),
+          cleanup: () => window.api.routePause(effectiveTargets)
+        }).catch(report)
       }
     }
 
@@ -95,29 +111,27 @@ export function RoutePanel(): JSX.Element {
     if (mode === 'loop') {
       setLoop(true)
       setWanderEnabled(false)
-      window.api.routeSetLoop(true)
-      window.api.routeSetWander(false, wanderRadiusM)
     } else if (mode === 'wander') {
       setLoop(false)
       setWanderEnabled(true)
-      window.api.routeSetLoop(false)
-      window.api.routeSetWander(true, wanderRadiusM)
     } else {
       setLoop(false)
       setWanderEnabled(false)
-      window.api.routeSetLoop(false)
-      window.api.routeSetWander(false, wanderRadiusM)
     }
   }
 
+  useEffect(() => {
+    if (getTargetSerials().length) void window.api.routeSetLoop(loop, getTargetSerials()).catch(report)
+  }, [loop])
+
   // Sync wander to backend whenever wanderEnabled/wanderRadiusM changes
   useEffect(() => {
-    window.api.routeSetWander(wanderEnabled, wanderRadiusM)
+    if (getTargetSerials().length) void window.api.routeSetWander(wanderEnabled, wanderRadiusM, getTargetSerials()).catch(report)
   }, [wanderEnabled, wanderRadiusM])
 
   // Sync fixed speed toggle to backend
   useEffect(() => {
-    window.api.routeSetFixedSpeed(fixedSpeed)
+    if (getTargetSerials().length) void window.api.routeSetFixedSpeed(fixedSpeed, getTargetSerials()).catch(report)
   }, [fixedSpeed])
 
   // Re-plan road-network route on control-point/profile/loop changes.
@@ -164,48 +178,54 @@ export function RoutePanel(): JSX.Element {
 
   const handlePlay = async (): Promise<void> => {
     const targetSerials = getTargetSerials()
-    if (targetSerials.length === 0 || waypoints.length < 2) return
-    if (routeMode === 'road-network' && planStatus === 'planning' && plannedWaypoints.length === 0) return
-
+    if (!targetSerials.length || waypoints.length < 2 || (routeMode === 'road-network' && planStatus !== 'success')) return
+    const operation = ++operationRef.current
+    const cancelled = (): boolean => operation !== operationRef.current
     setIsPlaying(true)
-
-    if (isPaused) {
-      await window.api.routePlay(targetSerials, speedMs)
+    setReturnMsg('')
+    try {
+      const started = await startMovement({
+        cancelled,
+        prepare: async () => {
+          if (!isPaused) {
+            assertMock(await Promise.all(targetSerials.map((serial) => window.api.enableMockLocation(serial))))
+            if (cancelled()) return
+            await window.api.routeSetWaypoints(waypoints, targetSerials)
+            if (cancelled()) return
+            await window.api.routeSetLoop(loop, targetSerials)
+            if (cancelled()) return
+            await window.api.routeSetWander(wanderEnabled, wanderRadiusM, targetSerials)
+            if (cancelled()) return
+            await window.api.routeSetFixedSpeed(fixedSpeed, targetSerials)
+            if (cancelled()) return
+          }
+        },
+        start: () => {
+          const from = startFromRealGps ? realGpsLocation : location
+          return window.api.routePlay(targetSerials, speedMs, isPaused ? undefined : from?.lat, isPaused ? undefined : from?.lng)
+        },
+        cleanup: () => window.api.routePause(targetSerials)
+      })
+      if (!started) return
       setPlaying(true)
       setIsPaused(false)
-      setIsPlaying(false)
-      return
-    }
-
-    await Promise.all(targetSerials.map((s) => window.api.enableMockLocation(s)))
-    await window.api.routeSetWaypoints(waypoints, targetSerials)
-    window.api.routeSetLoop(loop)
-    window.api.routeSetWander(wanderEnabled, wanderRadiusM)
-    window.api.routeSetFixedSpeed(fixedSpeed)
-
-    let fromLat: number | undefined
-    let fromLng: number | undefined
-    if (startFromRealGps && realGpsLocation) {
-      fromLat = realGpsLocation.lat
-      fromLng = realGpsLocation.lng
-    } else if (location) {
-      fromLat = location.lat
-      fromLng = location.lng
-    }
-
-    await window.api.routePlay(targetSerials, speedMs, fromLat, fromLng)
-    setPlaying(true)
-    setStopCooldown(null)
-    setIsPlaying(false)
+      setStopCooldown(null)
+    } catch (error) { report(error) }
+    finally { setIsPlaying(false) }
   }
 
   const handlePause = async (): Promise<void> => {
-    await window.api.routePause()
-    setPlaying(false)
-    setIsPaused(true)
+    operationRef.current += 1
+    const targets = getTargetSerials()
+    try {
+      await movementCommand(() => window.api.routePause(targets))
+      setPlaying(false)
+      setIsPaused(true)
+    } catch (error) { report(error) }
   }
 
   const handleReturn = (): void => {
+    operationRef.current += 1
     if (!realGpsLocation) {
       setReturnMsg('No real GPS known')
       setTimeout(() => setReturnMsg(''), 3000)
@@ -213,62 +233,77 @@ export function RoutePanel(): JSX.Element {
     }
     setPlaying(false)
     setIsPaused(false)
-    window.api.routeReturnToGps(realGpsLocation.lat, realGpsLocation.lng, speedMs)
+    const targets = getTargetSerials()
+    void movementCommand(() => window.api.routeReturnToGps(realGpsLocation.lat, realGpsLocation.lng, speedMs, targets)).catch(report)
     setStopCooldown(null)
   }
 
   const handleClearRoute = async (): Promise<void> => {
-    if (playing || isPaused || wandering) {
-      setShowClearDialog(true)
-      return
-    }
+    operationRef.current += 1
+    const targets = getTargetSerials()
+    try {
+      if (playing || isPaused || wandering) {
+        setShowClearDialog(true)
+        return
+      }
 
-    await window.api.routeStop()
-    clearWaypoints()
-    setIsPaused(false)
-    setStopCooldown(null)
-    setReturnMsg('')
-    setIsPlaying(false)
+      await movementCommand(() => window.api.routeStop(targets))
+      clearWaypoints()
+      setIsPaused(false)
+      setStopCooldown(null)
+      setReturnMsg('')
+      setIsPlaying(false)
+    } catch (error) { report(error) }
   }
 
   const handleClearStay = async (): Promise<void> => {
-    setShowClearDialog(false)
-    await window.api.routeStopStay()
-    clearWaypoints()
-    setIsPaused(false)
-    setStopCooldown(null)
-    setReturnMsg('')
-    setIsPlaying(false)
+    operationRef.current += 1
+    const targets = getTargetSerials()
+    try {
+      setShowClearDialog(false)
+      await movementCommand(() => window.api.routeStopStay(targets))
+      clearWaypoints()
+      setIsPaused(false)
+      setStopCooldown(null)
+      setReturnMsg('')
+      setIsPlaying(false)
+    } catch (error) { report(error) }
   }
 
   const handleClearRemove = async (): Promise<void> => {
-    setShowClearDialog(false)
-    await window.api.routeStop()
-    clearWaypoints()
-    setIsPaused(false)
-    setReturnMsg('')
-    setIsPlaying(false)
-    const from = location ?? realGpsLocation
-    if (from && realGpsLocation) {
-      const distKm = haversineKm(from.lat, from.lng, realGpsLocation.lat, realGpsLocation.lng)
-      const minutes = getCooldownMinutes(distKm)
-      if (minutes > 0) {
-        setStopCooldown({ distKm, minutes })
-        setTimeout(() => setStopCooldown(null), 10000)
+    operationRef.current += 1
+    const targets = getTargetSerials()
+    try {
+      setShowClearDialog(false)
+      await movementCommand(() => window.api.routeStop(targets))
+      clearWaypoints()
+      setIsPaused(false)
+      setReturnMsg('')
+      setIsPlaying(false)
+      const from = location ?? realGpsLocation
+      if (from && realGpsLocation) {
+        const distKm = haversineKm(from.lat, from.lng, realGpsLocation.lat, realGpsLocation.lng)
+        const minutes = getCooldownMinutes(distKm)
+        if (minutes > 0) {
+          setStopCooldown({ distKm, minutes })
+          setTimeout(() => setStopCooldown(null), 10000)
+        }
       }
-    }
+    } catch (error) { report(error) }
   }
 
   const handleImportGpx = async (): Promise<void> => {
-    const result = await window.api.importGpx()
-    if (result && result.length > 0) {
-      setRouteMode('manual')
-      setWaypoints(result)
-      await window.api.routeSetWaypoints(result)
-    }
+    operationRef.current += 1
+    try {
+      const result = await window.api.importGpx()
+      if (result && result.length > 0) {
+        setRouteMode('manual')
+        setWaypoints(result)
+      }
+    } catch (error) { report(error) }
   }
 
-  const hasDevice = !!activeDevice
+  const hasDevice = effectiveTargets.length > 0
   const canReturn = !!realGpsLocation
 
   const routeInfo = useMemo(() => {
@@ -304,7 +339,7 @@ export function RoutePanel(): JSX.Element {
     !hasDevice ||
     waypoints.length < 2 ||
     isPlaying ||
-    (routeMode === 'road-network' && planStatus === 'planning' && plannedWaypoints.length === 0)
+    (routeMode === 'road-network' && planStatus !== 'success')
 
   return (
     <div className="space-y-4">
@@ -385,7 +420,7 @@ export function RoutePanel(): JSX.Element {
         </Button>
       </div>
 
-      {returnMsg && <p className="text-xs text-danger">{returnMsg}</p>}
+      {returnMsg && <p role="alert" className="text-xs text-danger">{returnMsg}</p>}
 
       {stopCooldown && (
         <Card className="border-warning/40 bg-warning/10">
@@ -437,6 +472,7 @@ export function RoutePanel(): JSX.Element {
         {endMode === 'wander' && (
           <Card glass className="mt-2 p-3">
             <input
+              aria-label="Wander radius"
               type="range"
               min={20}
               max={500}

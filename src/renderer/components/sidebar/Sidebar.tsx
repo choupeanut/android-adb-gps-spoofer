@@ -1,3 +1,4 @@
+import { cancelMovement, movementCommand } from '../../lib/movement-commands'
 import type { JSX } from 'react'
 import { DeviceList } from '../device/DeviceList'
 import { Joystick } from '../controls/Joystick'
@@ -6,9 +7,7 @@ import { CooldownTimer } from '../controls/CooldownTimer'
 import { LocationHistory } from './LocationHistory'
 import { LogPanel } from './LogPanel'
 import { useLocationStore } from '../../stores/location.store'
-import { useDeviceStore } from '../../stores/device.store'
 import { useUiStore } from '../../stores/ui.store'
-import { useRouteStore } from '../../stores/route.store'
 import type { Tab } from '../../stores/ui.store'
 
 export function Sidebar(): JSX.Element {
@@ -24,27 +23,9 @@ export function Sidebar(): JSX.Element {
   }
 
   const handleStopAll = async (): Promise<void> => {
-    const targetSerials = useDeviceStore.getState().getTargetSerials()
-    if (targetSerials.length === 0) return
-    await window.api.stopJoystick()
-    const realGps = useLocationStore.getState().realGpsLocation
-    const currentMode = useLocationStore.getState().mode
-    if (currentMode === 'route') {
-      // RouteEngine owns the current position — let it handle the walk-back
-      if (realGps) {
-        const routeSpeedMs = useRouteStore.getState().speedMs
-        window.api.routeReturnToGps(realGps.lat, realGps.lng, routeSpeedMs)
-      } else {
-        await window.api.routeStop()
-      }
-    } else {
-      await window.api.routeStop()
-      if (realGps) {
-        window.api.stopSpoofingGraceful(targetSerials, realGps.lat, realGps.lng)
-      } else {
-        await window.api.stopSpoofing(targetSerials)
-      }
-    }
+    cancelMovement()
+    try { await movementCommand(() => window.api.stopAll('graceful')) }
+    catch (error: any) { alert(`Stop All failed: ${error.message}`) }
   }
 
   const modeColors: Record<string, string> = {

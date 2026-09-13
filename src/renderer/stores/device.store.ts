@@ -34,7 +34,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   setActiveDevice: (activeDevice) => set({ activeDevice }),
 
   selectDevice: (serial) => {
-    window.api.setActiveDevice(serial)
+    window.api.setActiveDevice(serial).catch((error) => alert(`Device selection failed: ${error.message}`))
     set({ activeDevice: serial, selectedSerials: [] })
   },
 
@@ -63,7 +63,13 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
 
   getTargetSerials: () => {
     const { selectedSerials, activeDevice } = get()
-    if (selectedSerials.length > 0) return selectedSerials
+    if (selectedSerials.length > 0) return [...selectedSerials]
     return activeDevice ? [activeDevice] : []
   }
 }))
+
+/** Exactly one selected member owns the displayed state. */
+export function getDisplayedSerial(): string | undefined {
+  const { activeDevice, selectedSerials } = useDeviceStore.getState()
+  return selectedSerials.length ? (activeDevice && selectedSerials.includes(activeDevice) ? activeDevice : selectedSerials[0]) : activeDevice ?? undefined
+}

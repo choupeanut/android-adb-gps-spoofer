@@ -1,4 +1,5 @@
-import { useState, useEffect, type JSX } from 'react'
+import { Modal } from '../ui/Modal'
+import { useState, useEffect, useRef, type JSX } from 'react'
 import { useDeviceStore } from '../../stores/device.store'
 import {
   mergeWifiIpHistory,
@@ -46,6 +47,12 @@ export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
   const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(false)
   const [ipHistory, setIpHistory] = useState<WifiIpHistoryEntry[]>([])
+  const operation = useRef(0)
+  const busy = useRef(false)
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; operation.current++ } }, [])
+  const dismiss = (): void => { operation.current++; onClose() }
+
 
   useEffect(() => {
     const local = readLocalHistory()
@@ -64,8 +71,8 @@ export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
     const api = (window as any).api
     if (api?.getClientIp) {
       api.getClientIp().then((detectedIp: string | null) => {
-        if (detectedIp && !ip) setIp(detectedIp)
-      })
+        if (detectedIp) setIp((current) => current || detectedIp)
+      }).catch(() => {})
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -101,24 +108,31 @@ export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
   }
 
   const handleConnectWifi = async (): Promise<void> => {
-    if (!ip.trim()) return
+    if (busy.current || !ip.trim()) return
     const cleanIp = ip.trim()
-    const cleanPort = parseInt(port) || 5555
+    const cleanPort = Number(port)
+    if (!Number.isInteger(cleanPort) || cleanPort < 1 || cleanPort > 65535) { setStatus('Error: port must be between 1 and 65535'); return }
+    busy.current = true
+    const id = ++operation.current
+    const current = () => mounted.current && operation.current === id
     setLoading(true)
     setStatus('Connecting...')
     try {
       const result = await window.api.connectWifi(cleanIp, cleanPort)
+      if (!current()) return
       const connected = typeof result === 'boolean' ? result : result.ok
       if (connected) {
         await recordIp(cleanIp, cleanPort)
+        if (!current()) return
         setStatus('Connected! Waiting for device…')
         // Wait for the device to appear as 'connected' in the devices list
         const targetSerial = `${cleanIp}:${cleanPort}`
         let found = false
         for (let i = 0; i < 8; i++) {
           await new Promise((r) => setTimeout(r, 1000))
-          const current = useDeviceStore.getState().devices
-          if (current.some((d) => d.serial === targetSerial && d.status === 'connected')) {
+          if (!current()) return
+          const discovered = useDeviceStore.getState().devices
+          if (discovered.some((d) => d.serial === targetSerial && d.status === 'connected')) {
             found = true
             break
           }
@@ -126,11 +140,11 @@ export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
         if (found) {
           markDeviceSelected(targetSerial)
           setStatus('Device ready!')
-          setTimeout(() => { onConnected(); onClose() }, 500)
+          setTimeout(() => { if (current()) { onConnected(); dismiss() } }, 500)
         } else {
           markDeviceSelected(targetSerial)
           setStatus('Device connected but not fully ready. It may appear shortly.')
-          setTimeout(() => { onConnected(); onClose() }, 2000)
+          setTimeout(() => { if (current()) { onConnected(); dismiss() } }, 2000)
         }
       } else {
         if (typeof result === 'boolean') {
@@ -143,45 +157,48 @@ export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
         }
       }
     } catch {
-      setStatus('Error connecting.')
+      if (current()) setStatus('Error connecting.')
+    } finally {
+      busy.current = false
+      if (current()) setLoading(false)
     }
-    setLoading(false)
   }
 
   const handleEnableTcpip = async (): Promise<void> => {
+    if (busy.current) return
     const usbDevice = devices.find((d) => d.connectionType === 'usb' && d.status === 'connected')
     if (!usbDevice) {
       setStatus('No USB device connected. Connect your Android device via USB first.')
       return
     }
+    busy.current = true
+    const id = ++operation.current
+    const current = () => mounted.current && operation.current === id
     setLoading(true)
     setStatus('Enabling TCP/IP mode on USB device...')
     try {
       const result = await window.api.enableTcpip(usbDevice.serial)
+      if (!current()) return
       if (result.success) {
         setStatus(`Ready. Device IP: ${result.ip ?? 'unknown'}. Now unplug USB and connect via Wi-Fi.`)
         if (result.ip) {
           setIp(result.ip)
           await recordIp(result.ip, parseInt(port) || 5555)
         }
-        setStep('wifi-ip')
+        if (current()) setStep('wifi-ip')
       } else {
         setStatus('Failed. Make sure a device is connected via USB.')
       }
     } catch {
-      setStatus('Error.')
+      if (current()) setStatus('Error.')
+    } finally {
+      busy.current = false
+      if (current()) setLoading(false)
     }
-    setLoading(false)
   }
 
   return (
-    <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60">
-      <div className="bg-card border border-border rounded-xl p-6 w-96 shadow-2xl">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-foreground">Add Device</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xl leading-none">&times;</button>
-        </div>
-
+    <Modal isOpen onClose={dismiss} title="Add Device" className="max-w-sm">
         {step === 'method' && (
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground">How do you want to connect?</p>
@@ -245,15 +262,18 @@ export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
             <div className="flex gap-2">
               <input
                 type="text"
+                aria-label="Device IP address"
                 placeholder="192.168.1.100"
                 value={ip}
                 onChange={(e) => setIp(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleConnectWifi()}
-                className="flex-1 px-3 py-2 text-sm bg-input border border-border rounded-md text-foreground placeholder:text-muted-foreground"
+                className="min-w-0 flex-1 px-3 py-2 text-sm bg-input border border-border rounded-md text-foreground placeholder:text-muted-foreground"
                 autoFocus
               />
               <input
                 type="text"
+                aria-label="ADB port"
+                inputMode="numeric"
                 value={port}
                 onChange={(e) => setPort(e.target.value)}
                 className="w-20 px-3 py-2 text-sm bg-input border border-border rounded-md text-foreground"
@@ -291,12 +311,11 @@ export function ConnectionDialog({ onClose, onConnected }: Props): JSX.Element {
         )}
 
         <button
-          onClick={() => { if (step !== 'method') setStep('method'); else onClose() }}
+          onClick={() => { if (step !== 'method') setStep('method'); else dismiss() }}
           className="mt-4 text-xs text-muted-foreground hover:text-foreground"
         >
           {step !== 'method' ? '← Back' : 'Cancel'}
         </button>
-      </div>
-    </div>
+    </Modal>
   )
 }
