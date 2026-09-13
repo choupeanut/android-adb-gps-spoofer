@@ -1,3 +1,4 @@
+import { isRoutePaused } from '../src/renderer/lib/display-events'
 import { movementCommand, startMovement, cancelMovement } from '../src/renderer/lib/movement-commands'
 import { settingsFingerprint } from '../src/renderer/lib/session-settings'
 import { createRouteCompletion } from '../src/renderer/lib/route-completion'
@@ -241,4 +242,11 @@ it('rejects delayed completion from an older shared membership', async () => {
   await movementCommand(async () => {})
   expect(api.getRealLocation).not.toHaveBeenCalled()
   completion.dispose()
+})
+
+it('teleport hydration does not create a paused route or disable route editing', () => {
+  const state = {playing:false,finishedNaturally:false,waypoints:[{},{}]}
+  expect(isRoutePaused(state, 'teleport')).toBe(false)
+  expect(isRoutePaused(state, 'route')).toBe(true)
+  expect(isRoutePaused({...state,waypoints:[]}, 'route')).toBe(false)
 })

@@ -1,6 +1,2 @@
-/**
- * Web entry point — loads the API adapter (window.api) before loading the React app.
- * This replaces the Electron preload/contextBridge mechanism.
- */
-import './web-api'
+/** The shared renderer bootstrap installs the browser adapter before rendering. */
 import '../../src/renderer/main'

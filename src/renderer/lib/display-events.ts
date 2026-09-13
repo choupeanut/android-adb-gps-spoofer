@@ -22,3 +22,7 @@ export class DisplayEvents {
     return true
   }
 }
+
+export function isRoutePaused(state: {playing?: boolean; finishedNaturally?: boolean; wandering?: boolean; waypoints?: unknown[]}, mode: string): boolean {
+  return mode === 'route' && !state.playing && !state.finishedNaturally && !state.wandering && (state.waypoints?.length ?? 0) >= 2
+}

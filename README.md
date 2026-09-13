@@ -154,7 +154,7 @@ Open `http://<host-ip>:3001`.
 |---|---:|---|
 | `ADB_PATH` | unset | Override the ADB binary path |
 | `PORT` | `3000` | Standalone web HTTP/WebSocket port |
-| `DATA_DIR` | `./data` locally, `/data` in Docker | SQLite/session/log storage directory |
+| `DATA_DIR` | `./data` locally, `/data` in Docker | SQLite/session storage directory (Web logs are in memory) |
 | `WEB_AUTH_TOKEN` | unset | Optional token required for `/api/*` and `/ws`; browser clients provide it as `?token=...` |
 | `WEB_CORS_ORIGIN` | unset | Optional single allowed browser origin; no CORS headers are emitted when unset |
 | `APP_VERSION` | `dev` | Version returned by `/api/version` |

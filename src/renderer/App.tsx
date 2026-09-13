@@ -7,7 +7,7 @@ import { FloatingControlPanel } from './components/layout/FloatingControlPanel'
 import { JoystickFloating } from './components/layout/JoystickFloating'
 import { BottomSheet } from './components/panels/BottomSheet'
 import { useBreakpoint } from './hooks/useBreakpoint'
-import { DisplayEvents } from './lib/display-events'
+import { DisplayEvents, isRoutePaused } from './lib/display-events'
 import { useDeviceStore, getDisplayedSerial } from './stores/device.store'
 import { useLocationStore } from './stores/location.store'
 import { useLogStore } from './stores/log.store'
@@ -150,7 +150,7 @@ export default function App(): JSX.Element {
       const state = data.state
       setRouteProgress(state.currentWaypointIndex, state.progressFraction)
       setPlaying(state.playing)
-      useRouteStore.getState().setIsPaused(state.isPaused ?? state.paused ?? (!state.playing && !state.finishedNaturally && !!data.location && data.mode !== 'joystick'))
+      useRouteStore.getState().setIsPaused(state.isPaused ?? state.paused ?? isRoutePaused(state, data.mode ?? (data.location ? 'route' : 'idle')))
       setWandering(state.wandering ?? false)
 
     }

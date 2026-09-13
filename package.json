@@ -1,6 +1,6 @@
 {
   "name": "android-adb-gps-spoofer",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "GPS location spoofing for Android via ADB \u2014 Electron desktop & Docker web server",
   "author": "peanutchou",
   "main": "./out/main/index.js",
