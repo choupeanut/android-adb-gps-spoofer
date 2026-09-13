@@ -15,7 +15,9 @@ if (!fs.existsSync(archivePath)) {
   process.exit(1)
 }
 
-const archiveEntries = new Set(listPackage(archivePath).map((entry) => entry.replace(/^\//, '').replaceAll('\\', '/')))
+const archiveEntries = new Set(
+  listPackage(archivePath).map((entry) => entry.replaceAll('\\', '/').replace(/^\/+/, '').replace(/^\.\//, '')),
+)
 const entryPackageNames = [
   '@electron-toolkit/utils',
   'better-sqlite3',
